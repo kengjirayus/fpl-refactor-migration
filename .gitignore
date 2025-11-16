@@ -1,0 +1,6 @@
+.devcontainer/
+.vscode/
+.venv/
+_pycodestyle/
+__pycache__/
+fpl_monolith.py
