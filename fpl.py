@@ -201,7 +201,7 @@ def main():
         try:
             entry_id = int(st.session_state.team_id_input)
             entry = get_entry(entry_id)
-            if not entry or 'name' not in entry: st.error("ไม่สามารถดึงข้อมูลทีมได้"); st.stop()
+            if not entry or 'name' not in entry: st.error("ไม่สามารถดึงข้อมูลทีมได้ อยู่ในช่วงอัปเดทข้อมูลจาก FPL API. กรุณาลองอีกครั้งในภายหลัง"); st.stop()
             picks = get_entry_picks(entry_id, cur_event or 1)
             
             # Process Picks & Selling Price
