@@ -8,16 +8,37 @@ POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
                  "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away","position"]
 
-# Known Penalty Takers (Approximate list, update as needed)
-PENALTY_TAKERS = {
-    "MCI": ["Haaland"], "LIV": ["Salah"], "ARS": ["Saka", "Odegaard"],
-    "CHE": ["Palmer"], "NEW": ["Isak", "Gordon"], "TOT": ["Son", "Solanke"],
-    "MUN": ["Fernandes"], "AVL": ["Watkins", "Tielemans"], "WHU": ["Paqueta", "Bowen"],
-    "BHA": ["Joao Pedro"], "BRE": ["Mbeumo"], "CRY": ["Mateta", "Eze"],
-    "WOL": ["Cunha"], "FUL": ["Jimenez"], "BOU": ["Kluivert"],
-    "NFO": ["Wood", "Gibbs-White"], "EVE": ["Calvert-Lewin"], "LEI": ["Vardy"],
-    "SOU": ["Armstrong"], "IPS": ["Delap"]
-}
+
+
+def generate_penalty_takers_map(elements_df: pd.DataFrame, teams_df: pd.DataFrame) -> Dict[str, List[str]]:
+    """
+    สร้าง Dictionary รายชื่อคนยิงจุดโทษแบบ Dynamic จาก API
+    โดยใช้ฟิลด์ 'penalties_order' ที่มากับข้อมูลนักเตะ
+    """
+    penalty_map = {}
+    
+    # สร้าง Map รหัสทีม -> ชื่อย่อทีม (เช่น 1 -> 'ARS')
+    id_to_short_name = teams_df.set_index('id')['short_name'].to_dict()
+    
+    # กรองเฉพาะคนที่มีลำดับการยิงจุดโทษ (penalties_order ไม่เป็น NULL)
+    # และเรียงลำดับความสำคัญ (1 มาก่อน)
+    takers_df = elements_df[elements_df['penalties_order'].notna()].sort_values('penalties_order')
+    
+    for _, player in takers_df.iterrows():
+        team_id = player['team']
+        team_short = id_to_short_name.get(team_id)
+        
+        # ใช้ web_name (ชื่อหลังเสื้อ)
+        # และใช้ unidecode เพื่อจัดการชื่อที่มีอักขระพิเศษรอไว้เลย
+        from unidecode import unidecode
+        player_name_clean = unidecode(str(player['web_name'])).lower().strip()
+        
+        if team_short:
+            if team_short not in penalty_map:
+                penalty_map[team_short] = []
+            penalty_map[team_short].append(player_name_clean)
+            
+    return penalty_map
 
 def current_and_next_event(events: List[Dict]) -> Tuple[Optional[int], Optional[int]]:
     cur = next_ev = None
@@ -207,6 +228,9 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     elements['base_xP'] = (att_base * 0.6) + (elements['form'] * 0.4) + def_base
     pos_mult = np.select([elements["element_type"] == 1, elements["element_type"] == 2, elements["element_type"] == 3, elements["element_type"] == 4], [0.9, 0.95, 1.0, 1.05], default=1.0)
 
+    # 1. สร้าง Dynamic Map ขึ้นมา ณ เวลานั้นเลย
+    dynamic_penalty_takers = generate_penalty_takers_map(elements, teams)
+
     # --- UPGRADE: xMins Approximation ---
     # Estimate average minutes per game (Total Minutes / Current Event Number)
     current_event_num = max(1, elements['event_points'].count() / len(elements)) # Rough estimate if not passed
@@ -242,13 +266,21 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
             xgi_per_90 = (row.get('xG', 0) * 5 + row.get('xA', 0) * 3) / games
             score += xgi_per_90 * 0.3
             
-        # 5. Set Piece Bonus
+        # 5. Set Piece Bonus (Dynamic Version)
         team_short = row.get('team_short', '')
-        web_name = row.get('web_name', '')
-        if team_short in PENALTY_TAKERS:
-            # Check if name matches any in the list
-            if any(taker in web_name for taker in PENALTY_TAKERS[team_short]):
-                score += 0.8 # Bonus for penalty taker
+        from unidecode import unidecode
+        web_name_clean = unidecode(str(row.get('web_name', ''))).lower().strip()
+        
+        # เช็คจาก Map ที่สร้างจาก API
+        if team_short in dynamic_penalty_takers:
+            team_takers = dynamic_penalty_takers[team_short]
+            
+            # ถ้าเป็นมือ 1 (คนแรกใน list)
+            if len(team_takers) > 0 and web_name_clean == team_takers[0]:
+                score += 0.8
+            # ถ้าเป็นมือ 2 (คนที่สองใน list)
+            elif len(team_takers) > 1 and web_name_clean == team_takers[1]:
+                score += 0.4
         
         # 6. xMins Penalty (Availability)
         play_prob = float(row.get('play_prob', 1.0))
