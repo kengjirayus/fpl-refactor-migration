@@ -4,3 +4,4 @@
 _pycodestyle/
 __pycache__/
 fpl_monolith.py
+.DS_Store
