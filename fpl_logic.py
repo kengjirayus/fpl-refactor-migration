@@ -138,13 +138,29 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     elements["play_prob"] = elements["chance_of_playing_next_round"] / 100.0
 
     if not understat_players.empty and 'xG' in understat_players.columns:
-        elements['web_name_lower'] = elements['web_name'].str.lower()
-        understat_players['player_name_lower'] = understat_players['player_name'].str.lower()
-        us_dedup = understat_players[['player_name_lower', 'xG', 'xA']].drop_duplicates('player_name_lower')
-        elements = elements.merge(us_dedup, left_on='web_name_lower', right_on='player_name_lower', how='left')
-        elements['xG'] = elements['xG'].fillna(0)
-        elements['xA'] = elements['xA'].fillna(0)
-        elements.drop(columns=['web_name_lower', 'player_name_lower'], inplace=True, errors='ignore')
+        # Normalize names for better matching
+        import unidecode
+        def normalize_name(n): return unidecode.unidecode(str(n)).lower().replace("-", " ").replace("'", "")
+
+        elements['web_name_norm'] = elements['web_name'].apply(normalize_name)
+        elements['full_name_norm'] = (elements['first_name'] + " " + elements['second_name']).apply(normalize_name)
+        understat_players['player_name_norm'] = understat_players['player_name'].apply(normalize_name)
+        
+        us_dedup = understat_players[['player_name_norm', 'xG', 'xA']].drop_duplicates('player_name_norm')
+        
+        # Merge 1: Match on Web Name
+        elements = elements.merge(us_dedup, left_on='web_name_norm', right_on='player_name_norm', how='left', suffixes=('', '_web'))
+        
+        # Merge 2: Match on Full Name
+        elements = elements.merge(us_dedup, left_on='full_name_norm', right_on='player_name_norm', how='left', suffixes=('', '_full'))
+        
+        # Coalesce xG/xA
+        elements['xG'] = elements['xG'].fillna(elements['xG_full']).fillna(0)
+        elements['xA'] = elements['xA'].fillna(elements['xA_full']).fillna(0)
+        
+        # Cleanup
+        drop_cols = ['web_name_norm', 'full_name_norm', 'player_name_norm', 'player_name_norm_full', 'xG_full', 'xA_full']
+        elements.drop(columns=[c for c in drop_cols if c in elements.columns], inplace=True, errors='ignore')
     else:
         elements['xG'] = 0.0
         elements['xA'] = 0.0

@@ -146,14 +146,17 @@ def add_table_css():
 
 def display_pitch_view(team_df: pd.DataFrame, title: str):
     st.subheader(title)
-    pitch_css = """
+    import base64
+    with open("Pix/FPL-Wiz-Field.png", "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode()
+    pitch_css = f"""
     <style>
-    .pitch-container { position: relative; width: 100%; max-width: 600px; margin: 20px auto; background-image: url('https://raw.githubusercontent.com/kengjirayus/fpl/refs/heads/main/Pix/FPL-Wiz-Field.png'); background-size: contain; background-repeat: no-repeat; background-position: center; aspect-ratio: 7/10; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 5% 0; }
-    .pitch-row { display: flex; justify-content: space-around; align-items: center; width: 100%; margin-bottom: 10%; }
-    .player-card { display: flex; flex-direction: column; align-items: center; text-align: center; width: 80px; }
-    .player-card img { width: 60px; height: 80px; margin-bottom: 4px; background-color: #eee; border-radius: 4px; object-fit: cover; }
-    .player-name { font-size: 11px; font-weight: bold; color: white; background-color: rgba(0, 0, 0, 0.7); padding: 2px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; box-sizing: border-box; }
-    .player-info { font-size: 10px; color: #f0f0f0; background-color: rgba(50, 50, 50, 0.6); padding: 1px 4px; border-radius: 4px; margin-top: 2px; }
+    .pitch-container {{ position: relative; width: 100%; max-width: 600px; margin: 20px auto; background-image: url('data:image/png;base64,{encoded_string}'); background-size: contain; background-repeat: no-repeat; background-position: center; aspect-ratio: 7/10; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 5% 0; }}
+    .pitch-row {{ display: flex; justify-content: space-around; align-items: center; width: 100%; margin-bottom: 10%; }}
+    .player-card {{ display: flex; flex-direction: column; align-items: center; text-align: center; width: 80px; }}
+    .player-card img {{ width: 60px; height: 80px; margin-bottom: 4px; background-color: #eee; border-radius: 4px; object-fit: cover; }}
+    .player-name {{ font-size: 11px; font-weight: bold; color: white; background-color: rgba(0, 0, 0, 0.7); padding: 2px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; box-sizing: border-box; }}
+    .player-info {{ font-size: 10px; color: #f0f0f0; background-color: rgba(50, 50, 50, 0.6); padding: 1px 4px; border-radius: 4px; margin-top: 2px; }}
     </style>
     """
     team_df['pos'] = team_df['element_type'].map(POSITIONS)

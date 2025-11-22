@@ -33,6 +33,22 @@ def main():
     add_table_css()
     add_global_css()
 
+    # --- Custom Button Styling ---
+    st.markdown("""
+        <style>
+        div.stButton > button[kind="primary"] {
+            background-color: #4CAF50 !important;
+            color: white !important;
+            border: none !important;
+        }
+        div.stButton > button[kind="primary"]:hover {
+            background-color: #FF9800 !important;
+            color: white !important;
+            border: none !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     with st.sidebar:
         st.header("⚙️ Settings | ตั้งค่า")
         def reset_team_id():
@@ -499,7 +515,7 @@ def main():
                                     xi_disp_sim['pos'] = xi_disp_sim['element_type'].map(POSITIONS)
                                     xi_disp_sim['pos'] = pd.Categorical(xi_disp_sim['pos'], categories=['GK', 'DEF', 'MID', 'FWD'], ordered=True)
                                     xi_disp_sim = xi_disp_sim.sort_values('pos')
-                                    display_user_friendly_table(xi_disp_sim[['web_name', 'team_short', 'pos', 'pred_points']], "", height=420)
+                                    display_user_friendly_table(xi_disp_sim[['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']], "", height=420)
                             
                             st.success(f"👑 Captain (Simulated): **{xi_sim.loc[cap_sim]['web_name']}** | Vice: **{xi_sim.loc[vc_sim]['web_name']}**")
                             
@@ -510,9 +526,15 @@ def main():
                             insights = analyze_lineup_insights(xi_sim, ordered_bench_sim)
                             if insights: st.info("💡 **คำแนะนำ:**\n\n" + "\n\n".join([f"- {i}" for i in insights]))
                             
-                            bench_disp_sim = ordered_bench_sim[['web_name', 'team_short', 'pos', 'pred_points']].copy().reset_index(drop=True)
-                            bench_disp_sim.index += 1
-                            display_user_friendly_table(bench_disp_sim, "ตัวสำรอง (Simulated Team - เรียงตามลำดับ)", height=175)
+                            bench_disp_sim = ordered_bench_sim[['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']].copy()
+                            bench_disp_sim.reset_index(drop=True, inplace=True)
+                            bench_disp_sim.index = bench_disp_sim.index + 1
+                            
+                            display_user_friendly_table(
+                                df=bench_disp_sim, 
+                                title="ตัวสำรอง (เรียงตามลำดับ)", 
+                                height=175
+                            )
 
         except Exception as e: st.error(f"Error: {e}")
 
