@@ -156,7 +156,6 @@ def main():
     us_players, us_teams = get_understat_data()
     feat = engineer_features_enhanced(elements, teams, nf, us_players)
     feat.set_index('id', inplace=True)
-    feat["pred_points"] = feat["pred_points_enhanced"]
 
     # Create maps
     feat_sorted = feat.sort_values('web_name')

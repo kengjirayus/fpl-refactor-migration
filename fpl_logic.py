@@ -8,6 +8,17 @@ POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
                  "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away","position"]
 
+# Known Penalty Takers (Approximate list, update as needed)
+PENALTY_TAKERS = {
+    "MCI": ["Haaland"], "LIV": ["Salah"], "ARS": ["Saka", "Odegaard"],
+    "CHE": ["Palmer"], "NEW": ["Isak", "Gordon"], "TOT": ["Son", "Solanke"],
+    "MUN": ["Fernandes"], "AVL": ["Watkins", "Tielemans"], "WHU": ["Paqueta", "Bowen"],
+    "BHA": ["Joao Pedro"], "BRE": ["Mbeumo"], "CRY": ["Mateta", "Eze"],
+    "WOL": ["Cunha"], "FUL": ["Jimenez"], "BOU": ["Kluivert"],
+    "NFO": ["Wood", "Gibbs-White"], "EVE": ["Calvert-Lewin"], "LEI": ["Vardy"],
+    "SOU": ["Armstrong"], "IPS": ["Delap"]
+}
+
 def current_and_next_event(events: List[Dict]) -> Tuple[Optional[int], Optional[int]]:
     cur = next_ev = None
     for ev in events:
@@ -63,21 +74,39 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
             opp_list.append(f"{teams_idx.loc[opp_id, 'short_name']} (A)")
         
         if num_fixtures == 0:
-            rows.append({'team': team_id, 'num_fixtures': 0, 'total_opp_def_str': 0, 'avg_fixture_ease': 0, 'opponent_str': "BLANK"})
+            rows.append({
+                'team': team_id, 'num_fixtures': 0, 
+                'total_opp_def_str': 0, 'total_opp_att_str': 0,
+                'avg_fixture_ease': 0, 'fixture_ease_att': 0, 'fixture_ease_def': 0,
+                'opponent_str': "BLANK"
+            })
             continue
 
         opponent_str = ", ".join(opp_list)
         total_opp_def_str = 0
+        total_opp_att_str = 0
+        
         for opp_id in home_opps:
             total_opp_def_str += teams_idx.loc[opp_id, 'strength_defence_away']
+            total_opp_att_str += teams_idx.loc[opp_id, 'strength_attack_away']
         for opp_id in away_opps:
             total_opp_def_str += teams_idx.loc[opp_id, 'strength_defence_home']
+            total_opp_att_str += teams_idx.loc[opp_id, 'strength_attack_home']
 
+        # Normalize Ease (Higher is easier)
+        # Attackers want weak Opponent Defense
+        # Defenders want weak Opponent Attack
+        max_def = teams_idx['strength_defence_home'].max()
+        max_att = teams_idx['strength_attack_home'].max()
+        
         rows.append({
             'team': team_id,
             'num_fixtures': num_fixtures,
             'total_opp_def_str': total_opp_def_str,
-            'avg_fixture_ease': 1.0 - (total_opp_def_str / (num_fixtures * teams_idx['strength_defence_home'].max())),
+            'total_opp_att_str': total_opp_att_str,
+            'avg_fixture_ease': 1.0 - (total_opp_def_str / (num_fixtures * max_def)), # Legacy fallback
+            'fixture_ease_att': 1.0 - (total_opp_def_str / (num_fixtures * max_def)), # For Attackers (vs Def)
+            'fixture_ease_def': 1.0 - (total_opp_att_str / (num_fixtures * max_att)), # For Defenders (vs Att)
             'opponent_str': opponent_str
         })
 
@@ -178,11 +207,64 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     elements['base_xP'] = (att_base * 0.6) + (elements['form'] * 0.4) + def_base
     pos_mult = np.select([elements["element_type"] == 1, elements["element_type"] == 2, elements["element_type"] == 3, elements["element_type"] == 4], [0.9, 0.95, 1.0, 1.05], default=1.0)
 
-    elements["pred_points_enhanced"] = (
-        elements['base_xP'] * (0.5 + 0.5 * elements["avg_fixture_ease"]) * (0.4 + 0.6 * elements["play_prob"]) * pos_mult * elements['num_fixtures']
-    )
-    elements["pred_points_enhanced"] = elements["pred_points_enhanced"].clip(lower=0, upper=25)
-    elements.loc[elements['num_fixtures'] == 0, 'pred_points_enhanced'] = 0
+    # --- UPGRADE: xMins Approximation ---
+    # Estimate average minutes per game (Total Minutes / Current Event Number)
+    current_event_num = max(1, elements['event_points'].count() / len(elements)) # Rough estimate if not passed
+    # Better: Use 'minutes' / (number of games played). But we don't have games_played easily.
+    # Let's use a simple heuristic: if minutes > 0, avg_mins = minutes / (points/3 approx) or just use minutes directly
+    # Actually, let's use the user's suggestion: xMins = play_prob * (minutes_per_game_approx)
+    # Since we don't have exact history, we'll use (minutes / total_possible_games) as a factor
+    # But for now, let's stick to the requested logic: xMins = chance_of_playing
+    
+    # --- UPGRADE: Prediction Logic ---
+    def calculate_dynamic_pred(row):
+        score = 0.0
+        
+        # 1. Base Points (from API)
+        score += float(row.get('pred_points', 0)) * 0.4
+        
+        # 2. Form
+        score += float(row.get('form', 0)) * 0.15
+        
+        # 3. Granular Fixture Difficulty
+        pos = row.get('element_type', 3)
+        if pos in [1, 2]: # GK, DEF -> Want weak Opponent Attack
+            fix_ease = row.get('fixture_ease_def', row.get('avg_fixture_ease', 0))
+        else: # MID, FWD -> Want weak Opponent Defense
+            fix_ease = row.get('fixture_ease_att', row.get('avg_fixture_ease', 0))
+            
+        score += fix_ease * 10 * 0.15 # Increased weight for granular difficulty
+        
+        # 4. xG/xA Bonus
+        if row.get('xG', 0) > 0 or row.get('xA', 0) > 0:
+            mins = float(row.get('minutes', 0))
+            games = max(1, mins / 90.0)
+            xgi_per_90 = (row.get('xG', 0) * 5 + row.get('xA', 0) * 3) / games
+            score += xgi_per_90 * 0.3
+            
+        # 5. Set Piece Bonus
+        team_short = row.get('team_short', '')
+        web_name = row.get('web_name', '')
+        if team_short in PENALTY_TAKERS:
+            # Check if name matches any in the list
+            if any(taker in web_name for taker in PENALTY_TAKERS[team_short]):
+                score += 0.8 # Bonus for penalty taker
+        
+        # 6. xMins Penalty (Availability)
+        play_prob = float(row.get('play_prob', 1.0))
+        if play_prob == 0: score = 0
+        elif play_prob < 0.5: score *= 0.2
+        elif play_prob < 0.75: score *= 0.6
+        else: score *= (0.7 + 0.3 * play_prob) # Scale 0.7-1.0 based on prob
+        
+        # 7. DGW/BGW
+        num_fix = row.get('num_fixtures', 1)
+        if num_fix == 2: score *= 1.6 # DGW Bonus
+        elif num_fix == 0: score = 0 # BGW
+        
+        return score
+
+    elements['pred_points'] = elements.apply(calculate_dynamic_pred, axis=1)
     elements['selection_score'] = elements.apply(calculate_smart_selection_score, axis=1)
 
     return elements
