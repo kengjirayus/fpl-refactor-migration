@@ -512,14 +512,18 @@ def display_player_comparison(player1_data, player2_data):
       r=[get_val(player1_data, category_map[c]) for c in categories],
       theta=categories,
       fill='toself',
-      name=player1_data.get('web_name', 'Player 1')
+      name=player1_data.get('web_name', 'Player 1'),
+      line_color='#1f77b4', # Blue
+      fillcolor='rgba(31, 119, 180, 0.3)'
     ))
     
     fig.add_trace(go.Scatterpolar(
       r=[get_val(player2_data, category_map[c]) for c in categories],
       theta=categories,
       fill='toself',
-      name=player2_data.get('web_name', 'Player 2')
+      name=player2_data.get('web_name', 'Player 2'),
+      line_color='#ff7f0e', # Orange
+      fillcolor='rgba(255, 127, 14, 0.3)'
     ))
 
     fig.update_layout(
