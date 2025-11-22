@@ -7,3 +7,4 @@ requests
 altair
 beautifulsoup4
 unidecode
+plotly

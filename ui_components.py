@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 import numpy as np
+import plotly.graph_objects as go
 from fpl_logic import POSITIONS
 
 # --- NEW: Global CSS from original file ---
@@ -481,3 +482,50 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.markdown("#### 🥅 Top 10 คู่ผู้รักษาประตู (GK Rotation Pairs)")
     st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
     st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
+
+def display_player_comparison(player1_data, player2_data):
+    # Map display categories to dataframe columns
+    category_map = {
+        'Form': 'form',
+        'ICT Index': 'ict_index',
+        'xG': 'xG',
+        'xA': 'xA',
+        'Fixture Ease': 'avg_fixture_ease',
+        'Predicted Pts': 'pred_points'
+    }
+    categories = list(category_map.keys())
+    
+    # Helper to safely get float value
+    def get_val(row, col):
+        try:
+            val = float(row.get(col, 0))
+            # Normalize Fixture Ease to 0-10 scale for visualization if it's 0-1
+            if col == 'avg_fixture_ease' and val <= 1.0:
+                return val * 10
+            return val
+        except:
+            return 0.0
+
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatterpolar(
+      r=[get_val(player1_data, category_map[c]) for c in categories],
+      theta=categories,
+      fill='toself',
+      name=player1_data.get('web_name', 'Player 1')
+    ))
+    
+    fig.add_trace(go.Scatterpolar(
+      r=[get_val(player2_data, category_map[c]) for c in categories],
+      theta=categories,
+      fill='toself',
+      name=player2_data.get('web_name', 'Player 2')
+    ))
+
+    fig.update_layout(
+      polar=dict(radialaxis=dict(visible=True, range=[0, 10])), # Adjust scale if needed
+      showlegend=True,
+      margin=dict(l=40, r=40, t=40, b=40)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
