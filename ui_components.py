@@ -479,6 +479,38 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.altair_chart(chart, use_container_width=True)
     st.markdown("---")
     
+    # --- Player Comparison Section ---
+    st.subheader("⚔️ เปรียบเทียบนักเตะ (Player Comparison)")
+    
+    # Create player search map
+    feat_sorted = feat_df.sort_values('web_name')
+    player_search_map = {f"{row['web_name']} ({row['team_short']}) - £{row['now_cost']/10.0}m": idx for idx, row in feat_sorted.iterrows()}
+    all_player_name_options = list(player_search_map.keys())
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        p1_name = st.selectbox("เลือกนักเตะคนที่ 1", all_player_name_options, index=0, key="p1_select")
+    
+    # Filter Player 2 options based on Player 1's position
+    p1_id = player_search_map[p1_name]
+    p1_pos = feat_df.loc[p1_id, 'element_type']
+    
+    # Get list of players with same position
+    same_pos_players = feat_df[feat_df['element_type'] == p1_pos].sort_values('web_name')
+    p2_options = [f"{row['web_name']} ({row['team_short']}) - £{row['now_cost']/10.0}m" for idx, row in same_pos_players.iterrows()]
+    
+    with c2:
+        p2_name = st.selectbox("เลือกนักเตะคนที่ 2 (ตำแหน่งเดียวกัน)", p2_options, index=0, key="p2_select")
+        
+    if p1_name and p2_name:
+        p2_id = player_search_map.get(p2_name)
+        
+        if p2_id:
+            p1_data = feat_df.loc[p1_id]
+            p2_data = feat_df.loc[p2_id]
+            display_player_comparison(p1_data, p2_data)
+    st.markdown("---")
+    
     st.markdown("#### 🥅 Top 10 คู่ผู้รักษาประตู (GK Rotation Pairs)")
     st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
     st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)

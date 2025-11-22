@@ -171,36 +171,6 @@ def main():
         merged_us_players, merged_us_teams = merge_understat_data(us_players, us_teams, feat, teams)
         display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams)
         
-        # --- NEW: Player Comparison Section ---
-        st.subheader("⚔️ เปรียบเทียบนักเตะ (Player Comparison)")
-        c1, c2 = st.columns(2)
-        with c1:
-            p1_name = st.selectbox("เลือกนักเตะคนที่ 1", all_player_name_options, index=0, key="p1_select")
-        
-        # Filter Player 2 options based on Player 1's position
-        p1_id = player_search_map[p1_name]
-        p1_pos = feat.loc[p1_id, 'element_type']
-        
-        # Get list of players with same position
-        same_pos_players = feat[feat['element_type'] == p1_pos].sort_values('web_name')
-        p2_options = [f"{row['web_name']} ({row['team_short']}) - £{row['now_cost']/10.0}m" for idx, row in same_pos_players.iterrows()]
-        
-        with c2:
-            # Try to keep previous selection if valid, else default to first option
-            p2_name = st.selectbox("เลือกนักเตะคนที่ 2 (ตำแหน่งเดียวกัน)", p2_options, index=0, key="p2_select")
-            
-        if p1_name and p2_name:
-            # p1_id is already retrieved
-            # Re-map p2_name to ID (need to look up in the filtered list or global map)
-            # Since p2_options format matches global map keys, we can use player_search_map
-            p2_id = player_search_map.get(p2_name)
-            
-            if p2_id:
-                p1_data = feat.loc[p1_id]
-                p2_data = feat.loc[p2_id]
-                display_player_comparison(p1_data, p2_data)
-        st.markdown("---")
-        
         # --- NEW: Injury & Suspension Watch Section ---
         display_injury_watch(feat)
         # Show landing page info only if not submitted
