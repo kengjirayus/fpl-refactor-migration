@@ -95,7 +95,16 @@ def calculate_smart_selection_score(player_row):
     
     score += player_row.get('form', 0) * 0.15
     score += player_row.get('avg_fixture_ease', 0) * 10 * 0.1
-    score *= (0.5 + 0.5 * player_row.get('play_prob', 1.0))
+    score += player_row.get('avg_fixture_ease', 0) * 10 * 0.1
+    
+    # --- IMPROVED: Stricter penalties for unavailable players ---
+    play_prob = player_row.get('play_prob', 1.0)
+    if play_prob == 0:
+        score *= 0.0  # Force score to 0 if definitely not playing
+    elif play_prob < 0.5:
+        score *= 0.2  # Heavy penalty for low chance
+    else:
+        score *= (0.5 + 0.5 * play_prob)
     
     if player_row.get('num_fixtures', 1) == 2:
         score *= 1.3
@@ -186,25 +195,45 @@ def select_captain_vice(xi_df: pd.DataFrame) -> Tuple[int, int]:
     return sorted_candidates.iloc[0].name, sorted_candidates.iloc[1].name
 
 def analyze_lineup_insights(xi_df: pd.DataFrame, bench_df: pd.DataFrame) -> List[str]:
+    """
+    วิเคราะห์และให้คำแนะนำเกี่ยวกับการจัดตัว
+    """
     insights = []
+    
+    # 1. เช็ค DGW/BGW
     dgw_count = (xi_df['num_fixtures'] == 2).sum()
     bgw_count = (xi_df['num_fixtures'] == 0).sum()
     
-    if dgw_count > 0: insights.append(f"✅ คุณมี {dgw_count} คนใน XI ที่มี Double Gameweek")
-    if bgw_count > 0: insights.append(f"⚠️ คุณมี {bgw_count} คนใน XI ที่ไม่มีนัดแข่ง!")
+    if dgw_count > 0:
+        insights.append(f"✅ คุณมี {dgw_count} คนใน XI ที่มี Double Gameweek")
+    if bgw_count > 0:
+        insights.append(f"⚠️ คุณมี {bgw_count} คนใน XI ที่ไม่มีนัดแข่ง!")
     
-    low_prob_players = xi_df[xi_df['play_prob'] < 0.75]
+    # 2. เช็คโอกาสลงเล่น (รวมตัวจริงและสำรอง)
+    all_players_df = pd.concat([xi_df, bench_df])
+    low_prob_players = all_players_df[all_players_df['play_prob'] <= 0.75]
     if len(low_prob_players) > 0:
         names = ", ".join(low_prob_players['web_name'].tolist())
-        insights.append(f"⚠️ นักเตะที่อาจไม่ลงเล่น: {names} (โอกาส < 75%)")
+        insights.append(f"⚠️ นักเตะที่อาจไม่ลงเล่น: {names} (โอกาส ≤ 75%)")
     
+    # 3. เช็ค Fixture Difficulty (avg_fixture_ease 0.3 คือยากมาก)
     hard_fixtures = xi_df[xi_df['avg_fixture_ease'] < 0.3]
     if len(hard_fixtures) > 2:
         insights.append(f"⚠️ คุณมี {len(hard_fixtures)} คนที่เจอคู่แข่งยาก (ความง่าย < 0.3)")
     
+    # 4. เช็ค xG/xA Leaders
+    if 'xG' in xi_df.columns and not xi_df.empty:
+        try:
+            top_xg_player = xi_df.nlargest(1, 'xG').iloc[0]
+            insights.append(f"🎯 นักเตะที่มี xG สูงสุดใน XI: {top_xg_player['web_name']} ({top_xg_player['xG']:.2f})")
+        except IndexError:
+            pass # เกิดขึ้นได้ถ้า xi_df ว่าง
+    
+    # 5. เช็ค Bench Strength
     bench_score_col = 'selection_score' if 'selection_score' in bench_df.columns else 'pred_points'
-    if bench_df.get(bench_score_col, 0).sum() < 7.5:
-        insights.append(f"⚠️ ตัวสำรองของคุณคะแนนคาดการณ์ต่ำ")
+    bench_total = bench_df.get(bench_score_col, 0).sum()
+    if bench_total < 7.5:
+        insights.append(f"⚠️ ตัวสำรองของคุณคะแนนคาดการณ์ต่ำ (คะแนนรวม: {bench_total:.1f})")
     
     return insights
 
@@ -409,7 +438,16 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
     for pos in [1, 2, 3, 4]:
         out_ids = position_groups.get(pos, [])
         if not out_ids: continue
-        for out_id in sorted(out_ids, key=lambda x: all_players.loc[x, 'pred_points']):
+        
+        # --- IMPROVED: Prioritize selling unavailable players ---
+        def get_sell_priority(pid):
+            p = all_players.loc[pid]
+            prob = p.get('play_prob', 1.0)
+            # Sort by: Play Prob (asc), Pred Points (asc)
+            # Lower prob = sell first. Lower points = sell first.
+            return (prob, p['pred_points'])
+
+        for out_id in sorted(out_ids, key=get_sell_priority):
             out_player = all_players.loc[out_id]
             out_team_id = int(out_player['team'])
             budget = out_player['selling_price'] + (remaining_bank * 10)
@@ -448,7 +486,7 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
                 "in_pos": POSITIONS.get(int(best_replacement["element_type"]), str(best_replacement["element_type"])),
                 "out_team": out_player.get("team_short", ""), "in_team": best_replacement.get("team_short", ""),
                 "in_points": float(best_replacement.get("pred_points", 0.0)),
-                "delta_points": float(best_replacement.get('pred_points', 0.0) - out_player.get('pred_points', 0.0)),
+                "delta_points": float(best_replacement.get('pred_points', 0.0) - out_player.get('pred_points', 0.0) + (2.0 if out_player.get('play_prob', 1.0) == 0 else (1.0 if out_player.get('play_prob', 1.0) < 0.5 else 0.0))), # Bonus for selling dead players
                 "roi_3gw": float(roi_in - roi_out),
                 "in_cost": float(best_replacement.get('now_cost', 0.0)) / 10.0, "out_cost": float(out_player.get('selling_price', 0.0)) / 10.0,
             })

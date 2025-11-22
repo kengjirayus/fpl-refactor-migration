@@ -65,7 +65,7 @@ def create_column_mapping():
         "ict_index": "ICT Index", "play_prob": "โอกาสลงเล่น (Play %)", "num_fixtures": "จำนวนแมตช์ (Fixtures)",
         "out_name": "ขายออก (Out)", "in_name": "ซื้อเข้า (In)", "delta_points": "ผลต่าง(Points)",
         "net_gain": "กำไรสุทธิ", "out_cost": "ราคาขาย (£)", "in_cost": "ราคาซื้อ (£)",
-        "hit_cost": "ค่าแรงลบ (Hit Cost)", "photo_url": "รูป"
+        "hit_cost": "ค่าแรงลบ (Hit Cost)", "photo_url": "รูป", "chance_of_playing_next_round": "โอกาสลงเล่น (%)"
     }
     english_headers = {
         "web_name": "Player Name", "team_short": "Team", "element_type": "Position", "pos": "Pos",
@@ -74,7 +74,8 @@ def create_column_mapping():
         "total_points": "Total Points", "selected_by_percent": "Selected %", "ict_index": "ICT Index",
         "play_prob": "Play Probability", "num_fixtures": "Fixtures", "out_name": "Player Out",
         "in_name": "Player In", "delta_points": "Points Difference", "net_gain": "Net Gain",
-        "out_cost": "Selling Price", "in_cost": "Buying Price", "hit_cost": "Hit Cost", "photo_url": "Photo"
+        "out_cost": "Selling Price", "in_cost": "Buying Price", "hit_cost": "Hit Cost", "photo_url": "Photo",
+        "chance_of_playing_next_round": "Chance of Playing"
     }
     return thai_english_headers, english_headers
 
@@ -91,8 +92,8 @@ def format_numbers_in_dataframe(df):
         if formatted_df[col].dtype in ['float64', 'int64']:
             if any(keyword in col.lower() for keyword in ['price', '£', 'cost', 'ราคา']):
                 formatted_df[col] = formatted_df[col].apply(lambda x: f"£{x:.1f}m" if pd.notnull(x) else "")
-            elif any(keyword in col.lower() for keyword in ['%', 'percent', 'prob']):
-                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.1f}%" if pd.notnull(x) else "")
+            elif any(keyword in col.lower() for keyword in ['%', 'percent', 'prob', 'โอกาส']):
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.0f}%" if pd.notnull(x) else "")
             elif any(keyword in col.lower() for keyword in ['points', 'คะแนน', 'form', 'ฟอร์ม']):
                 formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "")
             else:
@@ -166,7 +167,11 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
         name = player_row['web_name']
         if player_row.get('is_captain', False): name = f"{name} (C)"
         elif player_row.get('is_vice_captain', False): name = f"{name} (V)"
-        return f"<div class='player-card'><img src='{player_row['photo_url']}' alt='{player_row['web_name']}' onerror=\"this.onerror=null;this.src='{DEFAULT_PHOTO_URL_PITCH}';\"><div class='player-name'>{name}</div><div class='player-info'>{player_row['team_short']} | {player_row['pred_points']:.1f}pts</div></div>"
+        
+        chance = player_row.get('chance_of_playing_next_round', 100)
+        if pd.isna(chance): chance = 100
+        
+        return f"<div class='player-card'><img src='{player_row['photo_url']}' alt='{player_row['web_name']}' onerror=\"this.onerror=null;this.src='{DEFAULT_PHOTO_URL_PITCH}';\"><div class='player-name'>{name}</div><div class='player-info'>{player_row['pred_points']:.1f}pts | {chance:.0f}%</div></div>"
 
     html = f"{pitch_css}<div class='pitch-container'>"
     for group in [gk, defs, mids, fwds]:
@@ -379,15 +384,52 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.markdown("---")
 
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
+    st.caption("หมายเหตุ: ตารางนี้อาจยังแสดงไอคอนรูปเสีย 🖼️ หากไม่มีรูปใน API ครับ")
     top_tbl = feat_df[["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]].copy()
     top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
     top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
     top_tbl["price"] = (top_tbl["price"] / 10.0)
-    top_players = top_tbl.sort_values("pred_points", ascending=False).head(20).reset_index(drop=True)
+    
+    top_players = top_tbl.sort_values("pred_points", ascending=False).head(20)
+    
+    top_players.reset_index(drop=True, inplace=True)
     top_players.index = np.arange(1, len(top_players) + 1)
-    st.data_editor(top_players[["photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"]],
-        column_config={"photo_url": st.column_config.ImageColumn("รูป", width="small"), "web_name": "ชื่อนักเตะ", "price": st.column_config.NumberColumn("ราคา", format="£%.1f"), "pred_points": st.column_config.NumberColumn("คะแนน", format="%.1f")},
-        use_container_width=True, height=750, disabled=True
+    top_players.index.name = "ลำดับ"
+    
+    cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"]
+    
+    st.data_editor(
+        top_players[cols_to_show],
+        column_config={
+            "photo_url": st.column_config.ImageColumn(
+                "รูป", help="รูปนักเตะ", width="small"
+            ),
+            "web_name": st.column_config.TextColumn(
+                "ชื่อนักเตะ", width="medium"
+            ),
+            "team_short": st.column_config.TextColumn(
+                "ทีม", width="small"
+            ),
+            "pos": st.column_config.TextColumn(
+                "ตำแหน่ง", width="small"
+            ),
+            "price": st.column_config.NumberColumn(
+                "ราคา (£)", format="£%.1f"
+            ),
+            "form": st.column_config.NumberColumn(
+                "ฟอร์ม", format="%.1f"
+            ),
+            "fixture_ease": st.column_config.NumberColumn(
+                "ความง่าย", help="ความง่ายของเกมถัดไป", format="%.2f"
+            ),
+            "pred_points": st.column_config.NumberColumn(
+                "คะแนนคาดการณ์", format="%.1f"
+            ),
+        },
+        column_order=("ลำดับ", "photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"),
+        use_container_width=True,
+        height=750,
+        disabled=True
     )
     st.markdown("---")
     
@@ -406,7 +448,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         for _, row in feat_df[feat_df['selected_by_percent'] < 10.0].nlargest(5, 'pred_points').iterrows():
             c1, c2 = st.columns([1, 3])
             with c1: st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 50), unsafe_allow_html=True)
-            with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คะแนน: {row['pred_points']:.1f}")
+            with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คะแนน: {row['pred_points']:.1f} | คนมี: {row['selected_by_percent']:.1f}%")
     with col3:
         st.markdown("#### 👥 Top 5 ขวัญใจมหาชน")
         for _, row in feat_df.nlargest(5, 'selected_by_percent').iterrows():
@@ -416,10 +458,12 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.markdown("---")
 
     st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
+    st.markdown("เรียงตามความง่าย ➡ ยาก **อันดับตารางคะแนน** ของคู่แข่ง (สีเขียว = ง่าย, สีเหลือง = ปานกลาง, สีแดง = ยาก)")
     display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
     st.markdown("---")
 
     st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
+    st.markdown("🪄 เอาเมาส์ไปชี้เพื่อดูชื่อนักเตะได้เลย!แต่ละสีบอกตำแหน่ง ส่วนจุดใกล้มุมซ้ายบนที่สุดคือของดีราคาถูกในตำแหน่งนั้นๆ 💰")
     value_df = feat_df[feat_df['pred_points'] > 1.2].copy()
     value_df['price'] = value_df['now_cost'] / 10.0
     value_df['position'] = value_df['element_type'].map(POSITIONS)
@@ -432,4 +476,5 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.markdown("---")
     
     st.markdown("#### 🥅 Top 10 คู่ผู้รักษาประตู (GK Rotation Pairs)")
+    st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
     st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
