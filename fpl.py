@@ -22,7 +22,8 @@ from fpl_logic import (
 )
 from ui_components import (
     display_user_friendly_table, display_pitch_view, add_global_css,
-    add_table_css, display_home_dashboard, display_player_comparison
+    add_table_css, display_home_dashboard, display_player_comparison,
+    display_injury_watch
 )
 
 def main():
@@ -199,6 +200,9 @@ def main():
                 p2_data = feat.loc[p2_id]
                 display_player_comparison(p1_data, p2_data)
         st.markdown("---")
+        
+        # --- NEW: Injury & Suspension Watch Section ---
+        display_injury_watch(feat)
         # Show landing page info only if not submitted
         st.markdown("---")
         st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")

@@ -533,3 +533,58 @@ def display_player_comparison(player1_data, player2_data):
     )
     
     st.plotly_chart(fig, use_container_width=True)
+
+def display_injury_watch(feat_df: pd.DataFrame):
+    st.subheader("🏥 Injury & Suspension Watch (เช็คตัวเจ็บ/แบน)")
+    
+    # Filter players with < 100% chance of playing
+    # Ensure chance_of_playing_next_round is numeric, handle NaNs (assume 100 if NaN)
+    feat_df['chance_of_playing_next_round'] = pd.to_numeric(feat_df['chance_of_playing_next_round'], errors='coerce').fillna(100)
+    
+    injured_players = feat_df[feat_df['chance_of_playing_next_round'] < 100].copy()
+    
+    if injured_players.empty:
+        st.success("✅ ไม่มีนักเตะบาดเจ็บหรือติดโทษแบนในขณะนี้ (หรือ API ยังไม่อัปเดต)")
+        return
+
+    # Select relevant columns
+    cols_to_show = ["photo_url", "web_name", "team_short", "pos", "chance_of_playing_next_round", "news"]
+    
+    # Prepare for display
+    injured_players['pos'] = injured_players['element_type'].map(POSITIONS)
+    injured_players = injured_players.sort_values(['chance_of_playing_next_round', 'web_name'], ascending=[False, True])
+    
+    # Rename columns for display if needed, or use column_config
+    
+    st.data_editor(
+        injured_players[cols_to_show],
+        column_config={
+            "photo_url": st.column_config.ImageColumn(
+                "รูป", width="small"
+            ),
+            "web_name": st.column_config.TextColumn(
+                "ชื่อนักเตะ", width="medium"
+            ),
+            "team_short": st.column_config.TextColumn(
+                "ทีม", width="small"
+            ),
+            "pos": st.column_config.TextColumn(
+                "ตำแหน่ง", width="small"
+            ),
+            "chance_of_playing_next_round": st.column_config.ProgressColumn(
+                "โอกาสลงเล่น (%)", 
+                format="%d%%",
+                min_value=0,
+                max_value=100,
+                width="medium"
+            ),
+            "news": st.column_config.TextColumn(
+                "ข่าว/อาการ", width="large"
+            )
+        },
+        column_order=("photo_url", "web_name", "team_short", "pos", "chance_of_playing_next_round", "news"),
+        use_container_width=True,
+        height=400,
+        disabled=True,
+        hide_index=True
+    )
