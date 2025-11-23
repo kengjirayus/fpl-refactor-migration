@@ -3,7 +3,8 @@ import pandas as pd
 import altair as alt
 import numpy as np
 import plotly.graph_objects as go
-from fpl_logic import POSITIONS
+import plotly.graph_objects as go
+from fpl_logic import POSITIONS, calculate_home_away_split
 
 # --- NEW: Global CSS from original file ---
 def add_global_css():
@@ -66,7 +67,8 @@ def create_column_mapping():
         "ict_index": "ICT Index", "play_prob": "โอกาสลงเล่น (Play %)", "num_fixtures": "จำนวนแมตช์ (Fixtures)",
         "out_name": "ขายออก (Out)", "in_name": "ซื้อเข้า (In)", "delta_points": "ผลต่าง(Points)",
         "net_gain": "กำไรสุทธิ", "out_cost": "ราคาขาย (£)", "in_cost": "ราคาซื้อ (£)",
-        "hit_cost": "ค่าแรงลบ (Hit Cost)", "photo_url": "รูป", "chance_of_playing_next_round": "โอกาสลงเล่น (%)"
+        "hit_cost": "ค่าแรงลบ (Hit Cost)", "photo_url": "รูป", "chance_of_playing_next_round": "โอกาสลงเล่น (%)",
+        "weighted_form": "ฟอร์ม (Form)", "form_trend": "Trend"
     }
     english_headers = {
         "web_name": "Player Name", "team_short": "Team", "element_type": "Position", "pos": "Pos",
@@ -122,7 +124,16 @@ def add_color_coding(df, score_columns=None):
 
 def display_user_friendly_table(df, title="", language="thai_english", add_colors=True, height=400):
     if title: st.subheader(title)
+    if title: st.subheader(title)
     display_df = df.copy()
+    
+    # --- NEW: Combine Weighted Form and Trend ---
+    if 'weighted_form' in display_df.columns and 'form_trend' in display_df.columns:
+        display_df['weighted_form'] = display_df['weighted_form'].apply(lambda x: f"{x:.1f}") + " " + display_df['form_trend']
+        # Drop original form if we have weighted form, to avoid confusion
+        if 'form' in display_df.columns:
+            display_df = display_df.drop(columns=['form'])
+            
     formatted_df = format_dataframe(display_df, language)
     formatted_df = format_numbers_in_dataframe(formatted_df)
     if add_colors:
@@ -389,10 +400,26 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
 
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
     st.caption("หมายเหตุ: ตารางนี้อาจยังแสดงไอคอนรูปเสีย 🖼️ หากไม่มีรูปใน API ครับ")
-    top_tbl = feat_df[["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]].copy()
+    
+    # Include weighted_form and form_trend
+    cols_to_select = ["photo_url", "web_name", "team_short", "element_type", "now_cost", "avg_fixture_ease", "pred_points"]
+    if "weighted_form" in feat_df.columns: cols_to_select.append("weighted_form")
+    if "form_trend" in feat_df.columns: cols_to_select.append("form_trend")
+    if "form" in feat_df.columns and "weighted_form" not in feat_df.columns: cols_to_select.append("form")
+    if "xMins" in feat_df.columns: cols_to_select.append("xMins")
+    
+    top_tbl = feat_df[cols_to_select].copy()
     top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
     top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
     top_tbl["price"] = (top_tbl["price"] / 10.0)
+    
+    # Combine Form and Trend
+    if "weighted_form" in top_tbl.columns and "form_trend" in top_tbl.columns:
+        top_tbl["form_display"] = top_tbl["weighted_form"].apply(lambda x: f"{x:.1f}") + " " + top_tbl["form_trend"]
+    elif "form" in top_tbl.columns:
+        top_tbl["form_display"] = top_tbl["form"].astype(str)
+    else:
+        top_tbl["form_display"] = "-"
     
     top_players = top_tbl.sort_values("pred_points", ascending=False).head(20)
     
@@ -400,7 +427,8 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     top_players.index = np.arange(1, len(top_players) + 1)
     top_players.index.name = "ลำดับ"
     
-    cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"]
+    cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "xMins", "form_display", "fixture_ease", "pred_points"]
+    if "xMins" not in top_players.columns: cols_to_show.remove("xMins")
     
     st.data_editor(
         top_players[cols_to_show],
@@ -420,8 +448,11 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
             "price": st.column_config.NumberColumn(
                 "ราคา (£)", format="£%.1f"
             ),
-            "form": st.column_config.NumberColumn(
-                "ฟอร์ม", format="%.1f"
+            "xMins": st.column_config.NumberColumn(
+                "xMins", help="Expected Minutes", format="%d'"
+            ),
+            "form_display": st.column_config.TextColumn(
+                "ฟอร์ม (Form)", help="Weighted Form + Trend"
             ),
             "fixture_ease": st.column_config.NumberColumn(
                 "ความง่าย", help="ความง่ายของเกมถัดไป", format="%.2f"
@@ -430,7 +461,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                 "คะแนนคาดการณ์", format="%.1f"
             ),
         },
-        column_order=("ลำดับ", "photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"),
+        column_order=("ลำดับ", "photo_url", "web_name", "team_short", "pos", "price", "xMins", "form_display", "fixture_ease", "pred_points"),
         use_container_width=True,
         height=750,
         disabled=True
@@ -565,6 +596,62 @@ def display_player_comparison(player1_data, player2_data):
     )
     
     st.plotly_chart(fig, use_container_width=True)
+    
+    # --- NEW: Home/Away Split Chart ---
+    st.markdown("#### 🏠 vs 🚌 Home/Away Performance")
+    
+    # Fetch split data
+    # Robustly extract ID from Series name (index) or 'id' column
+    try:
+        p1_id = int(player1_data.name)
+    except (ValueError, TypeError):
+        p1_id = int(player1_data.get('id', 0))
+
+    try:
+        p2_id = int(player2_data.name)
+    except (ValueError, TypeError):
+        p2_id = int(player2_data.get('id', 0))
+    
+    if p1_id <= 0 or p2_id <= 0:
+        st.warning("Could not identify Player IDs for split analysis.")
+        return
+
+    with st.spinner("Fetching historical data for split analysis..."):
+        p1_split = calculate_home_away_split(p1_id)
+        p2_split = calculate_home_away_split(p2_id)
+    
+    # Prepare data for chart
+    split_data = [
+        {"Player": player1_data.get('web_name', 'P1'), "Venue": "Home", "Avg Points": p1_split['home_avg']},
+        {"Player": player1_data.get('web_name', 'P1'), "Venue": "Away", "Avg Points": p1_split['away_avg']},
+        {"Player": player2_data.get('web_name', 'P2'), "Venue": "Home", "Avg Points": p2_split['home_avg']},
+        {"Player": player2_data.get('web_name', 'P2'), "Venue": "Away", "Avg Points": p2_split['away_avg']},
+    ]
+    split_df = pd.DataFrame(split_data)
+    
+    # Altair Chart
+    split_chart = alt.Chart(split_df).mark_bar().encode(
+        x=alt.X('Venue:N', axis=alt.Axis(title=None)),
+        y=alt.Y('Avg Points:Q', title='Average Points'),
+        color=alt.Color('Player:N', legend=alt.Legend(title="Player")),
+        column=alt.Column('Player:N', header=alt.Header(title=None, labels=False)),
+        tooltip=['Player', 'Venue', 'Avg Points']
+    ).properties(width=150, height=300)
+    
+    st.altair_chart(split_chart, use_container_width=False)
+    
+    # Display stats table
+    st.caption("Detailed Split Stats:")
+    stats_data = {
+        "Stat": ["Home Avg Pts", "Away Avg Pts", "Home Games", "Away Games"],
+        f"{player1_data.get('web_name')}": [
+            f"{p1_split['home_avg']:.2f}", f"{p1_split['away_avg']:.2f}", p1_split['home_games'], p1_split['away_games']
+        ],
+        f"{player2_data.get('web_name')}": [
+            f"{p2_split['home_avg']:.2f}", f"{p2_split['away_avg']:.2f}", p2_split['home_games'], p2_split['away_games']
+        ]
+    }
+    st.dataframe(pd.DataFrame(stats_data), hide_index=True, use_container_width=True)
 
 def display_injury_watch(feat_df: pd.DataFrame):
     st.subheader("🏥 Injury & Suspension Watch (เช็คตัวเจ็บ/แบน)")

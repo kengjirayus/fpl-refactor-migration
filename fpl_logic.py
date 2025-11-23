@@ -3,6 +3,8 @@ import pandas as pd
 import streamlit as st
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
 from typing import List, Dict, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from data_helpers import get_player_history
 
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
@@ -128,7 +130,8 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
             'avg_fixture_ease': 1.0 - (total_opp_def_str / (num_fixtures * max_def)), # Legacy fallback
             'fixture_ease_att': 1.0 - (total_opp_def_str / (num_fixtures * max_def)), # For Attackers (vs Def)
             'fixture_ease_def': 1.0 - (total_opp_att_str / (num_fixtures * max_att)), # For Defenders (vs Att)
-            'opponent_str': opponent_str
+            'opponent_str': opponent_str,
+            'venue_multiplier': 1.0 + (len(home_opps) * 0.1) - (len(away_opps) * 0.1)
         })
 
     return pd.DataFrame(rows)
@@ -165,6 +168,41 @@ def calculate_smart_selection_score(player_row):
 
 def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame, understat_players: pd.DataFrame) -> pd.DataFrame:
     elements = elements.copy()
+    
+    # --- NEW: Parallel Weighted Form Calculation ---
+    # Fetch history and calculate weighted form for all players
+    # Use ThreadPoolExecutor for I/O bound tasks (API calls)
+    weighted_forms = {}
+    form_trends = {}
+    avg_minutes_map = {}
+    
+    # Limit to relevant players to save time (e.g., > 0.5% ownership or price > 4.0)
+    # For now, let's try all, but if slow, we can filter.
+    # Optimization: Only fetch for players with > 0 minutes or > 0 points or > 0.1% selected
+    relevant_players = elements[
+        (pd.to_numeric(elements['minutes'], errors='coerce').fillna(0) > 0) | 
+        (pd.to_numeric(elements['total_points'], errors='coerce').fillna(0) > 0) |
+        (pd.to_numeric(elements['selected_by_percent'], errors='coerce').fillna(0) > 0.1)
+    ]['id'].tolist()
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_id = {executor.submit(analyze_player_history, pid): pid for pid in relevant_players}
+        for future in as_completed(future_to_id):
+            pid = future_to_id[future]
+            try:
+                res = future.result()
+                weighted_forms[pid] = res['weighted_form']
+                form_trends[pid] = res['form_trend']
+                avg_minutes_map[pid] = res['avg_minutes']
+            except Exception:
+                weighted_forms[pid] = 0.0
+                form_trends[pid] = "➖"
+                avg_minutes_map[pid] = 0.0
+    
+    elements['weighted_form'] = elements['id'].map(weighted_forms).fillna(0.0)
+    elements['form_trend'] = elements['id'].map(form_trends).fillna("➖")
+    elements['avg_minutes'] = elements['id'].map(avg_minutes_map).fillna(0.0)
+
     elements["element_type"] = pd.to_numeric(elements["element_type"], errors='coerce').fillna(0).astype(int)
     elements = elements.merge(nf, on="team", how="left")
     elements['num_fixtures'] = elements['num_fixtures'].fillna(0).astype(int)
@@ -232,13 +270,11 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     dynamic_penalty_takers = generate_penalty_takers_map(elements, teams)
 
     # --- UPGRADE: xMins Approximation ---
-    # Estimate average minutes per game (Total Minutes / Current Event Number)
-    current_event_num = max(1, elements['event_points'].count() / len(elements)) # Rough estimate if not passed
-    # Better: Use 'minutes' / (number of games played). But we don't have games_played easily.
-    # Let's use a simple heuristic: if minutes > 0, avg_mins = minutes / (points/3 approx) or just use minutes directly
-    # Actually, let's use the user's suggestion: xMins = play_prob * (minutes_per_game_approx)
-    # Since we don't have exact history, we'll use (minutes / total_possible_games) as a factor
-    # But for now, let's stick to the requested logic: xMins = chance_of_playing
+    # xMins = min(90, avg_minutes * play_prob)
+    # play_prob is already 0.0-1.0 derived from chance_of_playing_next_round
+    elements['xMins'] = elements.apply(lambda row: min(90, row.get('avg_minutes', 0) * row.get('play_prob', 0)), axis=1).astype(int)
+    
+    # --- UPGRADE: Prediction Logic ---
     
     # --- UPGRADE: Prediction Logic ---
     def calculate_dynamic_pred(row):
@@ -283,16 +319,33 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
                 score += 0.4
         
         # 6. xMins Penalty (Availability)
+        # 6. xMins Penalty (Availability & Rotation)
+        # Use xMins / 90.0 as the multiplier
+        x_mins = float(row.get('xMins', 0))
         play_prob = float(row.get('play_prob', 1.0))
-        if play_prob == 0: score = 0
-        elif play_prob < 0.5: score *= 0.2
-        elif play_prob < 0.75: score *= 0.6
-        else: score *= (0.7 + 0.3 * play_prob) # Scale 0.7-1.0 based on prob
+        
+        if play_prob == 0: 
+            score = 0
+        else:
+            # If xMins is 0 (e.g. new player or no history), fallback to play_prob logic
+            if x_mins == 0 and play_prob > 0:
+                 if play_prob < 0.5: score *= 0.2
+                 elif play_prob < 0.75: score *= 0.6
+                 else: score *= (0.7 + 0.3 * play_prob)
+            else:
+                # Use xMins ratio
+                # Example: xMins = 60 -> score *= 0.66
+                # Example: xMins = 90 -> score *= 1.0
+                score *= (x_mins / 90.0)
         
         # 7. DGW/BGW
         num_fix = row.get('num_fixtures', 1)
         if num_fix == 2: score *= 1.6 # DGW Bonus
         elif num_fix == 0: score = 0 # BGW
+        
+        # 8. Venue Adjustment (Home/Away)
+        venue_mult = float(row.get('venue_multiplier', 1.0))
+        score *= venue_mult
         
         return score
 
@@ -488,7 +541,7 @@ def predict_next_n_gws(player_id: int, n_gws: int, current_gw: int, elements_df:
             opponent_id = fixture['team_a'] if is_home else fixture['team_h']
             opp_strength = team_def_strength.get(opponent_id, avg_def_strength)
             fixture_multiplier = avg_def_strength / max(opp_strength, 1)
-            home_boost = 1.1 if is_home else 0.95
+            home_boost = 1.1 if is_home else 0.9
             total_expected_points += base_xp * fixture_multiplier * home_boost * play_prob
     return total_expected_points
 
@@ -687,3 +740,84 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
                     remaining_bank -= cost_change
                     used_players.add(move['in_id'])
     return normal_moves, filtered_conservative_moves
+def calculate_home_away_split(player_id: int) -> Dict[str, float]:
+    """
+    Fetches player history and calculates average points for Home vs Away games.
+    """
+    try:
+        history_data = get_player_history(player_id)
+        history = history_data.get("history", [])
+        
+        if not history:
+            return {"home_avg": 0.0, "away_avg": 0.0, "home_games": 0, "away_games": 0}
+            
+        home_points = []
+        away_points = []
+        
+        for match in history:
+            points = match.get("total_points", 0)
+            if match.get("was_home", False):
+                home_points.append(points)
+            else:
+                away_points.append(points)
+                
+        home_avg = sum(home_points) / len(home_points) if home_points else 0.0
+        away_avg = sum(away_points) / len(away_points) if away_points else 0.0
+        
+        return {
+            "home_avg": round(home_avg, 2),
+            "away_avg": round(away_avg, 2),
+            "home_games": len(home_points),
+            "away_games": len(away_points)
+        }
+    except Exception as e:
+        print(f"Error calculating split for {player_id}: {e}")
+        return {"home_avg": 0.0, "away_avg": 0.0, "home_games": 0, "away_games": 0}
+
+def analyze_player_history(player_id: int) -> Dict[str, any]:
+    """
+    Fetches player history and calculates:
+    1. Weighted Form (60% recent 3, 40% prev 3)
+    2. Average Minutes (Last 5 games)
+    """
+    try:
+        history_data = get_player_history(player_id)
+        history = history_data.get("history", [])
+        
+        if not history:
+            return {"weighted_form": 0.0, "form_trend": "➖", "avg_minutes": 0.0}
+
+        # --- Weighted Form ---
+        recent_games = history[-3:]
+        previous_games = history[-6:-3]
+        
+        if not recent_games:
+            weighted_form = 0.0
+            trend = "➖"
+        else:
+            avg_recent = sum(g['total_points'] for g in recent_games) / len(recent_games)
+            if previous_games:
+                avg_previous = sum(g['total_points'] for g in previous_games) / len(previous_games)
+                weighted_form = (avg_recent * 0.6) + (avg_previous * 0.4)
+                if avg_recent > (avg_previous + 1.0): trend = "🔥"
+                elif avg_recent < (avg_previous - 1.0): trend = "📉"
+                else: trend = "➖"
+            else:
+                weighted_form = avg_recent
+                trend = "🔥" if avg_recent > 4.0 else "➖"
+
+        # --- Average Minutes (Last 5) ---
+        last_5_games = history[-5:]
+        if last_5_games:
+            avg_minutes = sum(g['minutes'] for g in last_5_games) / len(last_5_games)
+        else:
+            avg_minutes = 0.0
+
+        return {
+            "weighted_form": round(weighted_form, 1),
+            "form_trend": trend,
+            "avg_minutes": avg_minutes
+        }
+    except Exception as e:
+        # print(f"Error analyzing history for {player_id}: {e}")
+        return {"weighted_form": 0.0, "form_trend": "➖", "avg_minutes": 0.0}
