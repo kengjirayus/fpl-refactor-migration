@@ -580,7 +580,9 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
         for out_id in sorted(out_ids, key=get_sell_priority):
             out_player = all_players.loc[out_id]
             out_team_id = int(out_player['team'])
-            budget = out_player['selling_price'] + (remaining_bank * 10)
+            # --- FIX: Use initial bank for budget calculation to ensure independent suggestions ---
+            # Do NOT update remaining_bank cumulatively. Each suggestion should be valid on its own.
+            budget = out_player['selling_price'] + (bank * 10)
             all_replacements = all_players[(all_players['element_type'] == out_player['element_type']) & (~all_players.index.isin(valid_squad_ids)) & (all_players['now_cost'] <= budget) & (all_players['pred_points'] > out_player['pred_points'])].sort_values('pred_points', ascending=False)
             if all_replacements.empty: continue
 
@@ -597,14 +599,13 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
 
             if best_replacement is None: continue
             cost_change = (best_replacement['now_cost'] - out_player['selling_price']) / 10.0
-            if cost_change > remaining_bank: continue
             
-            if out_team_id != int(best_replacement['team']):
-                current_team_count[out_team_id] = current_team_count.get(out_team_id, 0) - 1
-                if current_team_count[out_team_id] <= 0: current_team_count.pop(out_team_id, None)
-                current_team_count[int(best_replacement['team'])] = current_team_count.get(int(best_replacement['team']), 0) + 1
+            # Double check budget (should be covered by query but good for safety)
+            if cost_change > bank: continue
             
-            remaining_bank = round(max(0.0, remaining_bank - cost_change), 2)
+            # Do NOT update remaining_bank here.
+            # remaining_bank = round(max(0.0, remaining_bank - cost_change), 2) 
+            
             used_in_players.add(best_replacement_id)
             roi_in = calculate_3gw_roi(best_replacement, fixtures_df, teams_df, current_event)
             roi_out = calculate_3gw_roi(out_player, fixtures_df, teams_df, current_event)
