@@ -56,6 +56,72 @@ def add_global_css():
         unsafe_allow_html=True
     )
 
+def display_loading_overlay():
+    """
+    Displays a full-screen loading overlay with an SVG animation.
+    """
+    import base64
+    try:
+        with open("Pix/FPLWIZ-loading.svg", "rb") as f:
+            svg_data = f.read()
+            b64_svg = base64.b64encode(svg_data).decode('utf-8')
+    except FileNotFoundError:
+        st.error("Loading SVG not found!")
+        return
+
+    st.markdown(
+        f"""
+        <style>
+        .loading-overlay {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.95);
+            z-index: 999999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }}
+        .loading-content {{
+            text-align: center;
+        }}
+        .loading-svg {{
+            width: 150px;
+            height: 150px;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite ease-in-out;
+        }}
+        .loading-text {{
+            font-family: 'Inter', sans-serif;
+            font-size: 24px;
+            font-weight: 600;
+            color: #37003c; /* Premier League Purple */
+            animation: blink 1.5s infinite;
+        }}
+        @keyframes pulse {{
+            0% {{ transform: scale(0.95); opacity: 0.8; }}
+            50% {{ transform: scale(1.05); opacity: 1; }}
+            100% {{ transform: scale(0.95); opacity: 0.8; }}
+        }}
+        @keyframes blink {{
+            0% {{ opacity: 0.3; }}
+            50% {{ opacity: 1; }}
+            100% {{ opacity: 0.3; }}
+        }}
+        </style>
+        <div class="loading-overlay">
+            <div class="loading-content">
+                <img src="data:image/svg+xml;base64,{b64_svg}" class="loading-svg" alt="Loading...">
+                <div class="loading-text">Loading...</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 # 1. สร้าง Dictionary สำหรับแปลง Column Names
 def create_column_mapping():
     thai_english_headers = {

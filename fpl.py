@@ -23,7 +23,7 @@ from fpl_logic import (
 from ui_components import (
     display_user_friendly_table, display_pitch_view, add_global_css,
     add_table_css, display_home_dashboard, display_player_comparison,
-    display_injury_watch
+    display_injury_watch, display_loading_overlay
 )
 
 def main():
@@ -132,8 +132,16 @@ def main():
         )
 
     # Load Data
+    loading_placeholder = st.empty()
+    with loading_placeholder:
+        display_loading_overlay()
+
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
+    
+    # Clear loading overlay
+    loading_placeholder.empty()
+
     if not bootstrap or "elements" not in bootstrap:
         st.error("⚠️ FPL API กำลังปิดปรับปรุงชั่วคราว")
         st.stop()
