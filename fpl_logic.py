@@ -663,7 +663,7 @@ def calculate_3gw_roi(player, fixtures_df, teams_df, current_event):
     except Exception:
         return float(player.get('pred_points', 0))
 
-def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int, all_players: pd.DataFrame, strategy: str, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int) -> List[Dict]:
+def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int, all_players: pd.DataFrame, strategy: str, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int, picks_data: List[Dict] = None) -> List[Dict]:
     valid_squad_ids = [pid for pid in current_squad_ids if pid in all_players.index]
     if not valid_squad_ids: return []
     current_squad_df = all_players.loc[valid_squad_ids]
@@ -674,6 +674,14 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
     elif strategy == "Allow Hit (AI Suggest)": max_transfers, hit_cost = 5, 4
     else: max_transfers, hit_cost = 15, 0
 
+    # Helper to get purchase price
+    purchase_price_map = {}
+    if picks_data:
+        for p in picks_data:
+            # Public API picks might not have purchase_price. Handle gracefully.
+            if 'purchase_price' in p:
+                purchase_price_map[p['element']] = p['purchase_price']
+
     current_team_count = {}
     for pid in valid_squad_ids:
         tid = int(all_players.loc[pid, 'team'])
@@ -683,7 +691,9 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
     for pid in valid_squad_ids:
         position_groups.setdefault(int(all_players.loc[pid, 'element_type']), []).append(pid)
 
-    remaining_bank, used_in_players, potential_moves = bank, set(), []
+    remaining_bank, used_in_players, all_potential_moves = bank, set(), []
+    
+    # Iterate through ALL positions and ALL players to find the best moves
     for pos in [1, 2, 3, 4]:
         out_ids = position_groups.get(pos, [])
         if not out_ids: continue
@@ -698,61 +708,97 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
 
         for out_id in sorted(out_ids, key=get_sell_priority):
             out_player = all_players.loc[out_id]
-            out_team_id = int(out_player['team'])
-            # --- FIX: Use initial bank for budget calculation to ensure independent suggestions ---
-            # Do NOT update remaining_bank cumulatively. Each suggestion should be valid on its own.
-            budget = out_player['selling_price'] + (bank * 10)
-            all_replacements = all_players[(all_players['element_type'] == out_player['element_type']) & (~all_players.index.isin(valid_squad_ids)) & (all_players['now_cost'] <= budget) & (all_players['pred_points'] > out_player['pred_points'])].sort_values('pred_points', ascending=False)
-            if all_replacements.empty: continue
+            
+            # --- Price Lock Analysis ---
+            price_loss = 0.0
+            purchase_price = purchase_price_map.get(out_id)
+            if purchase_price:
+                # Fallback estimate if selling_price not directly available in picks_data map
+                pick_obj = next((p for p in picks_data if p['element'] == out_id), None)
+                if pick_obj and 'selling_price' in pick_obj:
+                    selling_price = pick_obj['selling_price']
+                else:
+                    selling_price = out_player['now_cost']
 
-            best_replacement, best_replacement_id = None, None
-            for cid, candidate in all_replacements.iterrows():
-                candidate_team_id = int(candidate['team'])
-                ftc = current_team_count.copy()
-                ftc[out_team_id] = ftc.get(out_team_id, 0) - 1
-                if ftc[out_team_id] <= 0: ftc.pop(out_team_id, None)
-                if ftc.get(candidate_team_id, 0) + 1 > 3: continue
-                if int(cid) in used_in_players: continue
-                best_replacement, best_replacement_id = candidate, int(cid)
-                break
+                if purchase_price > selling_price:
+                    price_loss = (purchase_price - selling_price) / 10.0
 
-            if best_replacement is None: continue
-            cost_change = (best_replacement['now_cost'] - out_player['selling_price']) / 10.0
+            sell_price = out_player['now_cost'] / 10.0 # Use current cost for bank calculation approximation
             
-            # Double check budget (should be covered by query but good for safety)
-            if cost_change > bank: continue
+            # Calculate budget for this specific move (independent of other moves)
+            available_budget = bank + sell_price
             
-            # Do NOT update remaining_bank here.
-            # remaining_bank = round(max(0.0, remaining_bank - cost_change), 2) 
+            # Find best replacement
+            candidates = all_players[
+                (all_players['element_type'] == pos) &
+                (all_players.index != out_id) &
+                (~all_players.index.isin(valid_squad_ids)) & # Exclude players already in squad
+                ((all_players['now_cost'] / 10.0) <= available_budget) &
+                (all_players['chance_of_playing_next_round'] > 75)
+            ].copy()
             
-            used_in_players.add(best_replacement_id)
-            roi_in = calculate_3gw_roi(best_replacement, fixtures_df, teams_df, current_event)
-            roi_out = calculate_3gw_roi(out_player, fixtures_df, teams_df, current_event)
+            if candidates.empty: continue
             
-            potential_moves.append({
-                "out_id": int(out_id), "in_id": best_replacement_id,
-                "out_name": out_player.get("web_name", ""), "in_name": best_replacement.get("web_name", ""),
-                "out_pos": POSITIONS.get(int(out_player["element_type"]), str(out_player["element_type"])),
-                "in_pos": POSITIONS.get(int(best_replacement["element_type"]), str(best_replacement["element_type"])),
-                "out_team": out_player.get("team_short", ""), "in_team": best_replacement.get("team_short", ""),
-                "in_points": float(best_replacement.get("pred_points", 0.0)),
-                "delta_points": float(best_replacement.get('pred_points', 0.0) - out_player.get('pred_points', 0.0) + (2.0 if out_player.get('play_prob', 1.0) == 0 else (1.0 if out_player.get('play_prob', 1.0) < 0.5 else 0.0))), # Bonus for selling dead players
-                "roi_3gw": float(roi_in - roi_out),
-                "in_cost": float(best_replacement.get('now_cost', 0.0)) / 10.0, "out_cost": float(out_player.get('selling_price', 0.0)) / 10.0,
-            })
+            # Filter max 3 players per team
+            def can_add(pid):
+                tid = int(all_players.loc[pid, 'team'])
+                return current_team_count.get(tid, 0) < 3
+            
+            candidates = candidates[candidates.index.map(can_add)]
+            if candidates.empty: continue
 
-    potential_moves.sort(key=lambda x: x.get("delta_points", 0.0), reverse=True)
-    final_suggestions = []
-    GREEDY_THRESHOLD, CONSERVATIVE_THRESHOLD = -2.0, -0.1
-    for i, move in enumerate(potential_moves):
-        if len(final_suggestions) >= max_transfers: break
-        hit = 0 if len(final_suggestions) < free_transfers else hit_cost
-        net_gain = move["delta_points"] - hit
-        m = move.copy(); m['net_gain'] = round(net_gain, 2); m['hit_cost'] = hit
-        if strategy == "Free Transfer" and net_gain >= CONSERVATIVE_THRESHOLD: final_suggestions.append(m)
-        elif strategy == "Allow Hit (AI Suggest)" and net_gain >= GREEDY_THRESHOLD: final_suggestions.append(m)
-        elif strategy == "Wildcard / Free Hit" and net_gain > 0.0: final_suggestions.append(m)
-    return final_suggestions
+            # Get top 3 candidates to consider, not just the absolute best points
+            # This helps if the best points player has a bad ROI due to fixtures
+            top_candidates = candidates.nlargest(3, 'pred_points')
+            
+            for _, best_in in top_candidates.iterrows():
+                in_id = int(best_in.name)
+                
+                # ROI Calculation
+                roi = calculate_transfer_roi(out_id, in_id, current_event, all_players, fixtures_df, teams_df)
+                net_gain = roi['net_gain']
+                
+                # Apply Price Lock Penalty
+                warning_msg = ""
+                if price_loss > 0.3:
+                    net_gain -= 0.5 # Penalty for breaking price lock
+                    warning_msg = "⚠️ Selling at loss"
+                
+                if net_gain > (hit_cost if free_transfers == 0 else 0):
+                    all_potential_moves.append({
+                        "out_name": out_player['web_name'],
+                        "out_cost": sell_price,
+                        "in_name": best_in['web_name'],
+                        "in_cost": best_in['now_cost'] / 10.0,
+                        "delta_points": best_in['pred_points'] - out_player['pred_points'],
+                        "roi_3gw": roi['gross_gain'],
+                        "hit_cost": hit_cost if free_transfers == 0 else 0,
+                        "net_gain": net_gain,
+                        "price_loss": price_loss,
+                        "warning": warning_msg
+                    })
+
+    # Sort all collected moves by Net Gain (Descending)
+    all_potential_moves.sort(key=lambda x: x['net_gain'], reverse=True)
+    
+    # Select top N unique moves
+    final_moves = []
+    seen_out = set()
+    seen_in = set()
+    
+    for move in all_potential_moves:
+        if len(final_moves) >= max_transfers: break
+        
+        # Ensure we don't suggest selling the same player twice or buying the same player twice
+        # (unless we support multiple transfers, but for now let's keep it simple: 1 suggestion per player involved)
+        if move['out_name'] in seen_out or move['in_name'] in seen_in:
+            continue
+            
+        final_moves.append(move)
+        seen_out.add(move['out_name'])
+        seen_in.add(move['in_name'])
+            
+    return final_moves
 
 def optimize_wildcard_team(all_players: pd.DataFrame, budget: float) -> Optional[List[int]]:
     ids = list(all_players.index)

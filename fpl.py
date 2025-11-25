@@ -419,7 +419,8 @@ def main():
                 st.markdown("💡 คำแนะนำนี้ใช้ **ราคาขายจริง (Selling Price)** จาก FPL API ของคุณ")
                 
                 with st.spinner("Analyzing potential transfers..."):
-                    moves = suggest_transfers(valid_ids, bank, free_transfers, feat, transfer_strategy, fixtures_df, teams, target_event)
+                    # Pass picks_data to enable Price Lock Analysis
+                    moves = suggest_transfers(valid_ids, bank, free_transfers, feat, transfer_strategy, fixtures_df, teams, target_event, picks_data=picks_data)
                     if moves:
                         moves_df = pd.DataFrame(moves)
                         moves_df.index += 1
@@ -430,6 +431,14 @@ def main():
                         total_hit = moves_df['hit_cost'].sum()
                         st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m** | เสียแต้ม: **-{total_hit}**")
                         
+                        # Add Price Lock Warning to 'Out' column
+                        if 'price_loss' in moves_df.columns:
+                            moves_df['out_name'] = moves_df.apply(
+                                lambda x: f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m) ⚠️" if x.get('price_loss', 0) > 0.3 
+                                else (f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m)" if x.get('price_loss', 0) > 0 else x['out_name']),
+                                axis=1
+                            )
+
                         cols_ren = {
                             "out_name": "ขายออก (Out)", "out_cost": "ราคาขาย (£)",
                             "in_name": "ซื้อเข้า (In)", "in_cost": "ราคาซื้อ (£)",
