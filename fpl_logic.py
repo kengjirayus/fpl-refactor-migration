@@ -469,6 +469,62 @@ def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFr
 
     return opp_df, diff_df
 
+def detect_fixture_swing(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int) -> Dict[int, Dict]:
+    """
+    Detects teams with significant fixture difficulty swings (Improving/Worsening).
+    Compare Avg Difficulty of Next 3 GWs vs Following 3 GWs.
+    """
+    # Get matrix for next 6 GWs
+    _, diff_matrix = get_fixture_difficulty_matrix(fixtures_df, teams_df, current_event, lookahead=6)
+    
+    swing_data = {}
+    team_map = teams_df.set_index('short_name')['id'].to_dict()
+    
+    for team_short, row in diff_matrix.iterrows():
+        if team_short not in team_map: continue
+        team_id = team_map[team_short]
+        
+        # Short Term: GW1, GW2, GW3 (relative to current)
+        short_term_cols = [c for c in row.index if c.startswith('GW')][:3]
+        # Long Term: GW4, GW5, GW6
+        long_term_cols = [c for c in row.index if c.startswith('GW')][3:6]
+        
+        if not short_term_cols or not long_term_cols:
+            swing_data[team_id] = {'trend': 'STABLE', 'val': 0}
+            continue
+            
+        avg_short = row[short_term_cols].mean()
+        avg_long = row[long_term_cols].mean()
+        
+        # Difficulty Scale: Higher = Easier (usually 1-20 rank, but here it seems to be rank-based?)
+        # Wait, get_fixture_difficulty_matrix returns 'diff_df' where values are Opponent Rank (1-20).
+        # So Higher Value = Weaker Opponent = Easier Fixture.
+        
+        diff = avg_long - avg_short
+        
+        # Thresholds
+        # If Long Term is Easier (Higher Rank) -> IMPROVING (Buy Low now?)
+        # Wait, if Next 3 are Hard (Low Rank) and Following 3 are Easy (High Rank) -> "Improving"
+        # Actually, "Swing" usually means "About to change".
+        # If Next 3 are Good, and Following 3 are Bad -> WORSENING (Sell High)
+        # If Next 3 are Bad, and Following 3 are Good -> IMPROVING (Buy Low)
+        
+        trend = 'STABLE'
+        if diff > 4.0: # Long term is much easier (e.g. avg rank 15 vs 10)
+            trend = 'IMPROVING' # Green
+        elif diff < -4.0: # Long term is much harder
+            trend = 'WORSENING' # Red
+            
+        swing_data[team_id] = {
+            'trend': trend,
+            'short_avg': avg_short,
+            'long_avg': avg_long,
+            'diff': diff
+        }
+        
+    return swing_data
+
+
 @st.cache_data(ttl=300)
 def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame, all_players: pd.DataFrame, budget: float = 9.0):
     gks = all_players[

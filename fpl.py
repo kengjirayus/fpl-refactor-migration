@@ -18,7 +18,7 @@ from fpl_logic import (
     engineer_features_enhanced, get_fixture_difficulty_matrix, find_rotation_pairs,
     optimize_wildcard_team, optimize_starting_xi, select_captain_vice,
     smart_bench_order, analyze_lineup_insights, calculate_transfer_roi,
-    suggest_transfers, POSITIONS
+    suggest_transfers, POSITIONS, detect_fixture_swing
 )
 from ui_components import (
     display_user_friendly_table, display_pitch_view, add_global_css,
@@ -177,7 +177,11 @@ def main():
         opp_matrix, diff_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
         rotation_pairs = find_rotation_pairs(diff_matrix, teams, feat)
         merged_us_players, merged_us_teams = merge_understat_data(us_players, us_teams, feat, teams)
-        display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams)
+        
+        # --- NEW: Fixture Swing Detection ---
+        swing_data = detect_fixture_swing(fixtures_df, teams, target_event)
+        
+        display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams, swing_data=swing_data)
         
         # --- NEW: Injury & Suspension Watch Section ---
         display_injury_watch(feat)

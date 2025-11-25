@@ -380,7 +380,82 @@ def display_understat_section(merged_players: pd.DataFrame, merged_teams: pd.Dat
     
     st.markdown("---")
 
-def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame, opp_matrix: pd.DataFrame, diff_matrix: pd.DataFrame, rotation_pairs: pd.DataFrame, merged_understat_players: pd.DataFrame, merged_understat_teams: pd.DataFrame):
+def display_fixture_swing_section(swing_data: dict, feat_df: pd.DataFrame, teams_df: pd.DataFrame):
+    """
+    Displays the Fixture Swing Alert section with a professional, grouped UI.
+    """
+    if not swing_data: return
+
+    worsening_teams = [tid for tid, data in swing_data.items() if data['trend'] == 'WORSENING']
+    improving_teams = [tid for tid, data in swing_data.items() if data['trend'] == 'IMPROVING']
+
+    if not worsening_teams and not improving_teams: return
+
+    st.subheader("⚠️ Fixture Swing Alert")
+    st.markdown("โปรแกรมแข่งกำลัง 'พลิกความยาก' ระหว่าง 3 นัดถัดไป และ 3 นัดหลังจากนั้น")
+
+    col1, col2 = st.columns(2)
+
+    # --- 1. Worsening (Sell High) ---
+    with col1:
+        st.markdown("#### 🔴 Sell Watchlist (ช่วงควรทยอยปล่อย)")
+        if not worsening_teams:
+            st.info("✅ ไม่มีทีมที่ตารางแข่งกำลังจะแย่ลงอย่างมีนัยสำคัญ")
+        else:
+            for tid in worsening_teams:
+                team_info = teams_df[teams_df['id'] == tid].iloc[0]
+                diff_val = swing_data[tid]['diff']
+                
+                # Container for Team
+                with st.container(border=True):
+                    c1, c2 = st.columns([1, 4])
+                    with c1:
+                        st.image(team_info['logo_url'], width=40)
+                    with c2:
+                        st.markdown(f"**{team_info['short_name']}**")
+                        st.caption(f"Fixture Swing: {diff_val:+.1f} → Harder")
+
+                    
+                    # Check Team Players (Filter by xMins > 45 to show only key players)
+                    team_players = feat_df[(feat_df['team'] == tid) & (feat_df['xMins'] > 45)]
+                    
+                    if not team_players.empty:
+                        st.markdown("**⚠️ นักเตะในทีม:**")
+                        player_names = [f"{p['web_name']}" for _, p in team_players.iterrows()]
+                        st.markdown(f"<span style='color: #d9534f; font-weight: bold;'>{', '.join(player_names)}</span>", unsafe_allow_html=True)
+                    else:
+                        st.caption("ไม่มีนักเตะตัวหลัก (xMins > 45)")
+
+    # --- 2. Improving (Buy Low) ---
+    with col2:
+        st.markdown("#### 🟢 Buy Watchlist (จังหวะน่าลงทุน)")
+        if not improving_teams:
+            st.info("ℹ️ ไม่มีทีมที่ตารางแข่งกำลังจะดีขึ้นอย่างมีนัยสำคัญ")
+        else:
+            for tid in improving_teams:
+                team_info = teams_df[teams_df['id'] == tid].iloc[0]
+                diff_val = swing_data[tid]['diff']
+                
+                # Container for Team
+                with st.container(border=True):
+                    c1, c2 = st.columns([1, 4])
+                    with c1:
+                        st.image(team_info['logo_url'], width=40)
+                    with c2:
+                        st.markdown(f"**{team_info['short_name']}**")
+                        st.caption(f"Fixture Swing: {diff_val:+.1f} → Easier")
+                    
+                    # Suggest Assets (Top 3 by Pred Points)
+                    top_assets = feat_df[feat_df['team'] == tid].nlargest(3, 'pred_points')
+                    if not top_assets.empty:
+                        st.markdown("**💎 แนะนำ:**")
+                        asset_links = []
+                        for _, p in top_assets.iterrows():
+                            asset_links.append(f"{p['web_name']} (£{p['now_cost']/10.0}m)")
+                        st.markdown(f"<span style='color: #28a745;'>{', '.join(asset_links)}</span>", unsafe_allow_html=True)
+
+
+def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame, opp_matrix: pd.DataFrame, diff_matrix: pd.DataFrame, rotation_pairs: pd.DataFrame, merged_understat_players: pd.DataFrame, merged_understat_teams: pd.DataFrame, swing_data: dict = None):
     DEFAULT_PHOTO_URL = "https://resources.premierleague.com/premierleague/photos/players/110x140/p-blank.png"
     def get_player_image_html(photo_url, player_name, width=60):
         alt_text = str(player_name).replace("'", "").replace('"', '')
@@ -561,6 +636,11 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
     st.markdown("เรียงตามความง่าย ➡ ยาก **อันดับตารางคะแนน** ของคู่แข่ง (สีเขียว = ง่าย, สีเหลือง = ปานกลาง, สีแดง = ยาก)")
     display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
+    st.markdown("---")
+
+    # --- NEW: Fixture Swing Alert (Moved Here) ---
+    display_fixture_swing_section(swing_data, feat_df, teams_df)
+
     st.markdown("---")
 
     st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
