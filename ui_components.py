@@ -415,8 +415,11 @@ def display_fixture_swing_section(swing_data: dict, feat_df: pd.DataFrame, teams
                         st.caption(f"Fixture Swing: {diff_val:+.1f} → Harder")
 
                     
-                    # Check Team Players (Filter by xMins > 45 to show only key players)
-                    team_players = feat_df[(feat_df['team'] == tid) & (feat_df['xMins'] > 45)]
+                    # Check Team Players (Filter by xMins > 45 OR Ownership > 5% to show key players even if rotated/flagged)
+                    team_players = feat_df[
+                        (feat_df['team'] == tid) & 
+                        ((feat_df['xMins'] > 45) | (feat_df['selected_by_percent'] > 5.0))
+                    ]
                     
                     if not team_players.empty:
                         st.markdown("**⚠️ นักเตะในทีม:**")

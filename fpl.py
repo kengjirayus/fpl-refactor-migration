@@ -163,7 +163,10 @@ def main():
     # Process Data
     nf = next_fixture_features(fixtures_df, teams, target_event)
     us_players, us_teams = get_understat_data()
-    feat = engineer_features_enhanced(elements, teams, nf, us_players)
+    
+    # Initial Feature Engineering (Top Players only)
+    # Pass cur_event for avg_minutes fallback logic
+    feat = engineer_features_enhanced(elements, teams, nf, us_players, my_team_ids=None, gameweek=cur_event or 1)
     feat.set_index('id', inplace=True)
 
     # Create maps
@@ -286,6 +289,23 @@ def main():
                 bank = entry.get('last_deadline_bank', 0) / 10.0
                 current_ids = [p['element'] for p in picks_data]
                 valid_ids = [i for i in current_ids if i in feat.index]
+                
+                # --- FIX: Re-calculate features to ensure user's squad has xMins ---
+                # The initial load might have missed some of the user's players if they aren't in top 250 owned/top 100 points.
+                # We re-run with my_team_ids to force fetch their history.
+                with st.spinner("🔄 Refining player data for your squad..."):
+                     feat = engineer_features_enhanced(elements, teams, nf, us_players, my_team_ids=valid_ids, gameweek=cur_event or 1)
+                     feat.set_index('id', inplace=True)
+                     
+                     # Re-create maps with updated data
+                     feat_sorted = feat.sort_values('web_name')
+                     player_search_map = {f"{row['web_name']} ({row['team_short']}) - £{row['now_cost']/10.0}m": idx for idx, row in feat_sorted.iterrows()}
+                     player_id_to_name_map = {v: k for k, v in player_search_map.items()}
+                     
+                     # Update selling price map again as feat is refreshed
+                     feat['selling_price'] = feat.index.map(selling_price_map)
+                     feat['selling_price'].fillna(feat['now_cost'], inplace=True)
+
                 squad_df = feat.loc[valid_ids].copy()
 
                 free_transfers_from_api = entry.get('free_transfers', 1)
@@ -302,7 +322,12 @@ def main():
                 xi_ids, bench_ids = optimize_starting_xi(squad_df)
                 if xi_ids:
                     xi_df = squad_df.loc[xi_ids].copy()
-                    cap_id, vc_id = select_captain_vice(xi_df)
+                    cap_data = select_captain_vice(xi_df)
+                    
+                    # Extract IDs for display logic
+                    cap_id = cap_data['safe_pick']['id']
+                    vc_id = cap_data['vice_picks'][0]['id']
+                    
                     xi_df['is_captain'] = xi_df.index == cap_id
                     xi_df['is_vice_captain'] = xi_df.index == vc_id
 
@@ -328,7 +353,20 @@ def main():
                                 height=420
                             )
 
-                    st.success(f"👑 Captain: **{xi_df.loc[cap_id]['web_name']}** | Vice-Captain: **{xi_df.loc[vc_id]['web_name']}**")
+                    # --- Enhanced Captain Display ---
+                    st.markdown("### 🧢 Captain Recommendation")
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        safe = cap_data['safe_pick']
+                        st.success(f"🛡️ **Safe Pick**\n\n**{safe['name']}**\n\nEV: {safe['ev']:.2f} | Risk: {safe['risk']:.2f}")
+                        
+                    with c2:
+                        diff = cap_data['diff_pick']
+                        st.info(f"🎲 **Differential**\n\n**{diff['name']}**\n\nOwn: {diff['ownership']}% | Diff Score: {diff['diff_score']:.2f}")
+                        
+                    vc_names = ", ".join([v['name'] for v in cap_data['vice_picks']])
+                    st.caption(f"Vice-Captain Options: {vc_names}")
                     
                     xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
                     xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()

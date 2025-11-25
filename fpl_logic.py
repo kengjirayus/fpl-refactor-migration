@@ -166,7 +166,7 @@ def calculate_smart_selection_score(player_row):
     
     return score
 
-def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame, understat_players: pd.DataFrame) -> pd.DataFrame:
+def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame, understat_players: pd.DataFrame, my_team_ids: List[int] = None, gameweek: int = 1) -> pd.DataFrame:
     elements = elements.copy()
     
     # --- NEW: Parallel Weighted Form Calculation ---
@@ -175,6 +175,7 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     weighted_forms = {}
     form_trends = {}
     avg_minutes_map = {}
+    variance_map = {}
     
     # Limit to relevant players to save time (e.g., > 0.5% ownership or price > 4.0)
     # Optimization: Only fetch for Top 250 owned + Top 100 points to reduce API calls (approx 300 unique)
@@ -183,10 +184,16 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     # Ensure columns are numeric for sorting
     elements['selected_by_percent'] = pd.to_numeric(elements['selected_by_percent'], errors='coerce').fillna(0)
     elements['total_points'] = pd.to_numeric(elements['total_points'], errors='coerce').fillna(0)
+    elements['minutes'] = pd.to_numeric(elements['minutes'], errors='coerce').fillna(0)
     
     top_owned = elements.nlargest(250, 'selected_by_percent')['id'].tolist()
     top_points = elements.nlargest(100, 'total_points')['id'].tolist()
-    relevant_players = list(set(top_owned + top_points))
+    
+    # Always include user's current team to ensure xMins is calculated for them
+    relevant_players = set(top_owned + top_points)
+    if my_team_ids:
+        relevant_players.update(my_team_ids)
+    relevant_players = list(relevant_players)
 
     with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_id = {executor.submit(analyze_player_history, pid): pid for pid in relevant_players}
@@ -197,10 +204,12 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
                 weighted_forms[pid] = res['weighted_form']
                 form_trends[pid] = res['form_trend']
                 avg_minutes_map[pid] = res['avg_minutes']
+                variance_map[pid] = res.get('points_variance', 0.0)
             except Exception:
                 weighted_forms[pid] = 0.0
                 form_trends[pid] = "➖"
                 avg_minutes_map[pid] = 0.0
+                variance_map[pid] = 0.0
     
     # Map calculated values. For those not in relevant_players, fallback to standard 'form'
     elements['weighted_form'] = elements['id'].map(weighted_forms)
@@ -208,10 +217,17 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     elements['weighted_form'] = elements['weighted_form'].fillna(pd.to_numeric(elements['form'], errors='coerce').fillna(0.0))
     
     elements['form_trend'] = elements['id'].map(form_trends).fillna("➖")
-    # Fallback for avg_minutes: Use 'minutes' / games_played (approx) or just 0 if not calculated
-    # Actually, for non-VIP players, we can just assume 0 or use their average from total stats if needed.
-    # But for now, 0 is safe as they are likely bench fodder.
-    elements['avg_minutes'] = elements['id'].map(avg_minutes_map).fillna(0.0)
+    
+    # Fallback for avg_minutes: Use 'minutes' / gameweek (approx) if not calculated
+    # This ensures players from smaller teams (not in top owned) still have an xMins value
+    def get_fallback_minutes(row):
+        if row['id'] in avg_minutes_map:
+            return avg_minutes_map[row['id']]
+        # Fallback: Season average
+        return row['minutes'] / max(1, gameweek)
+
+    elements['avg_minutes'] = elements.apply(get_fallback_minutes, axis=1)
+    elements['points_variance'] = elements['id'].map(variance_map).fillna(0.0)
 
     elements["element_type"] = pd.to_numeric(elements["element_type"], errors='coerce').fillna(0).astype(int)
     elements = elements.merge(nf, on="team", how="left")
@@ -375,17 +391,77 @@ def smart_bench_order(bench_df: pd.DataFrame) -> pd.DataFrame:
     bench_outfield = bench_outfield.sort_values('autosub_value', ascending=False)
     return pd.concat([bench_gk, bench_outfield])
 
-def select_captain_vice(xi_df: pd.DataFrame) -> Tuple[int, int]:
+def select_captain_vice(xi_df: pd.DataFrame) -> Dict[str, any]:
+    """
+    Selects Captain and Vice-Captain using Enhanced EV Calculation.
+    Returns a dictionary with 'safe', 'differential', and 'vice' options.
+    """
     xi_candidates = xi_df.copy()
-    xi_candidates['captain_score'] = (
-        xi_candidates.get('selection_score', xi_candidates['pred_points']) * 0.5 +
-        xi_candidates.get('form', 0) * 0.2 +
-        xi_candidates.get('avg_fixture_ease', 0) * 10 * 0.2 +
-        (xi_candidates.get('xG', 0) + xi_candidates.get('xA', 0)) * 0.1
-    )
-    xi_candidates.loc[xi_candidates['num_fixtures'] == 2, 'captain_score'] *= 1.5
-    sorted_candidates = xi_candidates.sort_values('captain_score', ascending=False)
-    return sorted_candidates.iloc[0].name, sorted_candidates.iloc[1].name
+    
+    # --- 1. Calculate Risk Factor & EV ---
+    # risk_factor = 1 - (variance_last_5 / max_variance) * 0.2
+    # If max_variance is 0 (e.g. all players consistent or no data), risk factor is 1.0
+    max_variance = xi_candidates['points_variance'].max()
+    if max_variance == 0: max_variance = 1.0 # Avoid division by zero
+    
+    def calculate_ev(row):
+        pred = row.get('pred_points', 0)
+        var = row.get('points_variance', 0)
+        risk_factor = 1.0 - (var / max_variance) * 0.2
+        ev = (pred * 2) * risk_factor
+        return ev, risk_factor
+        
+    # Apply calculation
+    ev_results = xi_candidates.apply(calculate_ev, axis=1)
+    xi_candidates['captain_ev'] = [x[0] for x in ev_results]
+    xi_candidates['risk_factor'] = [x[1] for x in ev_results]
+    
+    # --- 2. Calculate Differential Score ---
+    # differential_bonus = 1.0 + ((100 - ownership) / 100) * 0.3
+    # differential_score = ev * differential_bonus
+    def calculate_diff_score(row):
+        ownership = float(row.get('selected_by_percent', 0))
+        diff_bonus = 1.0 + ((100.0 - ownership) / 100.0) * 0.3
+        return row['captain_ev'] * diff_bonus
+        
+    xi_candidates['diff_score'] = xi_candidates.apply(calculate_diff_score, axis=1)
+    
+    # --- 3. Select Options ---
+    
+    # Safe Pick: Highest EV
+    safe_pick = xi_candidates.nlargest(1, 'captain_ev').iloc[0]
+    
+    # Differential Pick: Highest Diff Score (excluding the Safe Pick if possible)
+    remaining_for_diff = xi_candidates[xi_candidates.index != safe_pick.name]
+    if not remaining_for_diff.empty:
+        diff_pick = remaining_for_diff.nlargest(1, 'diff_score').iloc[0]
+    else:
+        diff_pick = safe_pick
+    
+    # Vice Captains: Next best EVs (excluding Safe Pick)
+    remaining = xi_candidates[xi_candidates.index != safe_pick.name]
+    vc_options = remaining.nlargest(2, 'captain_ev')
+    
+    return {
+        "safe_pick": {
+            "id": int(safe_pick.name),
+            "name": safe_pick['web_name'],
+            "ev": safe_pick['captain_ev'],
+            "risk": safe_pick['risk_factor'],
+            "ownership": safe_pick['selected_by_percent']
+        },
+        "diff_pick": {
+            "id": int(diff_pick.name),
+            "name": diff_pick['web_name'],
+            "ev": diff_pick['captain_ev'], # Show raw EV, but selected for differential potential
+            "diff_score": diff_pick['diff_score'],
+            "ownership": diff_pick['selected_by_percent']
+        },
+        "vice_picks": [
+            {"id": int(row.name), "name": row['web_name'], "ev": row['captain_ev']} 
+            for _, row in vc_options.iterrows()
+        ]
+    }
 
 def analyze_lineup_insights(xi_df: pd.DataFrame, bench_df: pd.DataFrame) -> List[str]:
     """
@@ -946,48 +1022,61 @@ def calculate_home_away_split(player_id: int) -> Dict[str, float]:
 
 def analyze_player_history(player_id: int) -> Dict[str, any]:
     """
-    Fetches player history and calculates:
-    1. Weighted Form (60% recent 3, 40% prev 3)
-    2. Average Minutes (Last 5 games)
+    Analyzes a player's history to calculate weighted form and trend.
+    Fetches element-summary from API.
     """
     try:
-        history_data = get_player_history(player_id)
-        history = history_data.get("history", [])
+        url = f"https://fantasy.premierleague.com/api/element-summary/{player_id}/"
+        r = requests.get(url, timeout=5) # Short timeout for parallel calls
+        if r.status_code != 200: return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
         
-        if not history:
-            return {"weighted_form": 0.0, "form_trend": "➖", "avg_minutes": 0.0}
-
-        # --- Weighted Form ---
-        recent_games = history[-3:]
-        previous_games = history[-6:-3]
+        data = r.json()
+        history = data.get('history', [])
         
-        if not recent_games:
-            weighted_form = 0.0
-            trend = "➖"
-        else:
-            avg_recent = sum(g['total_points'] for g in recent_games) / len(recent_games)
-            if previous_games:
-                avg_previous = sum(g['total_points'] for g in previous_games) / len(previous_games)
-                weighted_form = (avg_recent * 0.6) + (avg_previous * 0.4)
-                if avg_recent > (avg_previous + 1.0): trend = "🔥"
-                elif avg_recent < (avg_previous - 1.0): trend = "📉"
-                else: trend = "➖"
-            else:
-                weighted_form = avg_recent
-                trend = "🔥" if avg_recent > 4.0 else "➖"
-
-        # --- Average Minutes (Last 5) ---
-        last_5_games = history[-5:]
-        if last_5_games:
-            avg_minutes = sum(g['minutes'] for g in last_5_games) / len(last_5_games)
-        else:
-            avg_minutes = 0.0
-
+        if not history: return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
+        
+        # Sort by round (descending)
+        history.sort(key=lambda x: x['round'], reverse=True)
+        last_5 = history[:5]
+        
+        if not last_5: return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
+        
+        # Weighted Form
+        total_weight = 0
+        weighted_sum = 0
+        minutes_sum = 0
+        points_list = []
+        
+        for i, match in enumerate(last_5):
+            pts = match['total_points']
+            mins = match['minutes']
+            weight = 5 - i # 5, 4, 3, 2, 1
+            
+            weighted_sum += pts * weight
+            total_weight += weight
+            minutes_sum += mins
+            points_list.append(pts)
+            
+        weighted_form = weighted_sum / total_weight
+        avg_minutes = minutes_sum / len(last_5)
+        
+        # Form Trend
+        trend = "➖"
+        if len(last_5) >= 2:
+            recent_avg = sum(m['total_points'] for m in last_5[:2]) / 2
+            older_avg = sum(m['total_points'] for m in last_5[2:]) / max(1, len(last_5)-2)
+            if recent_avg > older_avg + 1.5: trend = "🔥"
+            elif recent_avg < older_avg - 1.5: trend = "📉"
+            
+        # Variance Calculation
+        points_variance = np.var(points_list) if len(points_list) > 1 else 0.0
+            
         return {
-            "weighted_form": round(weighted_form, 1),
-            "form_trend": trend,
-            "avg_minutes": avg_minutes
+            'weighted_form': weighted_form,
+            'form_trend': trend,
+            'avg_minutes': avg_minutes,
+            'points_variance': points_variance
         }
-    except Exception as e:
-        # print(f"Error analyzing history for {player_id}: {e}")
-        return {"weighted_form": 0.0, "form_trend": "➖", "avg_minutes": 0.0}
+        
+    except Exception:
+        return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
