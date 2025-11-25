@@ -190,7 +190,6 @@ def add_color_coding(df, score_columns=None):
 
 def display_user_friendly_table(df, title="", language="thai_english", add_colors=True, height=400):
     if title: st.subheader(title)
-    if title: st.subheader(title)
     display_df = df.copy()
     
     # --- NEW: Combine Weighted Form and Trend ---
