@@ -665,12 +665,12 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
     return pairs_df[['GK1', 'GK2', 'Total Cost','Rating']].head(10).reset_index(drop=True)
 
 @st.cache_data(ttl=300)
-def predict_next_n_gws(player_id: int, n_gws: int, current_gw: int, elements_df: pd.DataFrame, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame) -> float:
-    if player_id not in elements_df.index: return 0.0
-    player = elements_df.loc[player_id]
-    team_id = player['team']
-    base_xp = player.get('base_xP', player.get('pred_points', 0) / max(0.5, player.get('avg_fixture_ease', 1)))
-    play_prob = player.get('play_prob', 1.0)
+def predict_next_n_gws(player_data: Dict, n_gws: int, current_gw: int, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame) -> float:
+    # Use dictionary access instead of DataFrame lookup
+    team_id = player_data['team']
+    base_xp = player_data.get('base_xP', player_data.get('pred_points', 0) / max(0.5, player_data.get('avg_fixture_ease', 1)))
+    play_prob = player_data.get('play_prob', 1.0)
+    
     total_expected_points = 0.0
     team_def_strength = teams_df.set_index('id')['strength_defence_overall'].to_dict()
     avg_def_strength = np.mean(list(team_def_strength.values()))
@@ -688,8 +688,15 @@ def predict_next_n_gws(player_id: int, n_gws: int, current_gw: int, elements_df:
     return total_expected_points
 
 def calculate_transfer_roi(player_out_id: int, player_in_id: int, current_gw: int, elements_df: pd.DataFrame, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, hit_cost: int = 0, lookahead: int = 3) -> Dict:
-    out_xp_3gw = predict_next_n_gws(player_out_id, lookahead, current_gw, elements_df, fixtures_df, teams_df)
-    in_xp_3gw = predict_next_n_gws(player_in_id, lookahead, current_gw, elements_df, fixtures_df, teams_df)
+    # Extract necessary data to pass to cached function (avoids hashing full DataFrame)
+    cols = ['team', 'base_xP', 'pred_points', 'avg_fixture_ease', 'play_prob']
+    
+    p_out = elements_df.loc[player_out_id, cols].to_dict()
+    p_in = elements_df.loc[player_in_id, cols].to_dict()
+    
+    out_xp_3gw = predict_next_n_gws(p_out, lookahead, current_gw, fixtures_df, teams_df)
+    in_xp_3gw = predict_next_n_gws(p_in, lookahead, current_gw, fixtures_df, teams_df)
+    
     gross_gain = in_xp_3gw - out_xp_3gw
     net_gain = gross_gain - hit_cost
     return {"out_xp_3gw": out_xp_3gw, "in_xp_3gw": in_xp_3gw, "gross_gain": gross_gain, "net_gain": net_gain, "is_worth_it": net_gain > 0.5}
@@ -1023,14 +1030,12 @@ def calculate_home_away_split(player_id: int) -> Dict[str, float]:
 def analyze_player_history(player_id: int) -> Dict[str, any]:
     """
     Analyzes a player's history to calculate weighted form and trend.
-    Fetches element-summary from API.
+    Fetches element-summary from API (using cached helper).
     """
     try:
-        url = f"https://fantasy.premierleague.com/api/element-summary/{player_id}/"
-        r = requests.get(url, timeout=5) # Short timeout for parallel calls
-        if r.status_code != 200: return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
+        data = get_player_history(player_id)
+        if not data: return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
         
-        data = r.json()
         history = data.get('history', [])
         
         if not history: return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}

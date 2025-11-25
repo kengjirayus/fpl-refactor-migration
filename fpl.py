@@ -178,7 +178,12 @@ def main():
     # Dashboard (If not submitted)
     if not st.session_state.get('analysis_submitted', False):
         opp_matrix, diff_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
-        rotation_pairs = find_rotation_pairs(diff_matrix, teams, feat)
+        # Pass subset to avoid hashing errors
+        rotation_pairs = find_rotation_pairs(
+            diff_matrix, 
+            teams, 
+            feat[['element_type', 'chance_of_playing_next_round', 'pred_points', 'now_cost', 'team', 'web_name', 'team_short']]
+        )
         
         # --- NEW: Fixture Swing Detection ---
         swing_data = detect_fixture_swing(fixtures_df, teams, target_event)
