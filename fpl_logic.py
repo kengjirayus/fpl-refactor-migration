@@ -177,13 +177,16 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     avg_minutes_map = {}
     
     # Limit to relevant players to save time (e.g., > 0.5% ownership or price > 4.0)
-    # For now, let's try all, but if slow, we can filter.
-    # Optimization: Only fetch for players with > 0 minutes or > 0 points or > 0.1% selected
-    relevant_players = elements[
-        (pd.to_numeric(elements['minutes'], errors='coerce').fillna(0) > 0) | 
-        (pd.to_numeric(elements['total_points'], errors='coerce').fillna(0) > 0) |
-        (pd.to_numeric(elements['selected_by_percent'], errors='coerce').fillna(0) > 0.1)
-    ]['id'].tolist()
+    # Optimization: Only fetch for Top 250 owned + Top 100 points to reduce API calls (approx 300 unique)
+    # This prevents hundreds of concurrent requests for irrelevant players.
+    
+    # Ensure columns are numeric for sorting
+    elements['selected_by_percent'] = pd.to_numeric(elements['selected_by_percent'], errors='coerce').fillna(0)
+    elements['total_points'] = pd.to_numeric(elements['total_points'], errors='coerce').fillna(0)
+    
+    top_owned = elements.nlargest(250, 'selected_by_percent')['id'].tolist()
+    top_points = elements.nlargest(100, 'total_points')['id'].tolist()
+    relevant_players = list(set(top_owned + top_points))
 
     with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_id = {executor.submit(analyze_player_history, pid): pid for pid in relevant_players}
@@ -199,8 +202,15 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
                 form_trends[pid] = "➖"
                 avg_minutes_map[pid] = 0.0
     
-    elements['weighted_form'] = elements['id'].map(weighted_forms).fillna(0.0)
+    # Map calculated values. For those not in relevant_players, fallback to standard 'form'
+    elements['weighted_form'] = elements['id'].map(weighted_forms)
+    # Fallback: Use standard form for non-VIP players
+    elements['weighted_form'] = elements['weighted_form'].fillna(pd.to_numeric(elements['form'], errors='coerce').fillna(0.0))
+    
     elements['form_trend'] = elements['id'].map(form_trends).fillna("➖")
+    # Fallback for avg_minutes: Use 'minutes' / games_played (approx) or just 0 if not calculated
+    # Actually, for non-VIP players, we can just assume 0 or use their average from total stats if needed.
+    # But for now, 0 is safe as they are likely bench fodder.
     elements['avg_minutes'] = elements['id'].map(avg_minutes_map).fillna(0.0)
 
     elements["element_type"] = pd.to_numeric(elements["element_type"], errors='coerce').fillna(0).astype(int)

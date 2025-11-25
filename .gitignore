@@ -6,3 +6,4 @@ __pycache__/
 fpl_monolith.py
 .DS_Store
 fpl_master.py
+Log/
