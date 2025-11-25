@@ -179,10 +179,18 @@ def main():
     if not st.session_state.get('analysis_submitted', False):
         opp_matrix, diff_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
         rotation_pairs = find_rotation_pairs(diff_matrix, teams, feat)
-        merged_us_players, merged_us_teams = merge_understat_data(us_players, us_teams, feat, teams)
         
         # --- NEW: Fixture Swing Detection ---
         swing_data = detect_fixture_swing(fixtures_df, teams, target_event)
+        
+        # Pass subsets to avoid hashing errors (TypeError: unhashable type: 'list') and improve performance
+        # merge_understat_data is cached, so we want to pass only what it needs
+        merged_us_players, merged_us_teams = merge_understat_data(
+            us_players, 
+            us_teams, 
+            feat[['team', 'web_name', 'photo_url', 'team_short', 'goals_scored', 'assists']], 
+            teams[['id', 'name', 'logo_url']]
+        )
         
         display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams, swing_data=swing_data)
         
@@ -248,7 +256,10 @@ def main():
                     
                     # --- Pitch View ---
                     xi_df = squad_df.loc[xi_ids].copy()
-                    cap, vc = select_captain_vice(xi_df)
+                    cap_data = select_captain_vice(xi_df)
+                    cap = cap_data['safe_pick']['id']
+                    vc = cap_data['vice_picks'][0]['id']
+                    
                     xi_df['is_captain'] = xi_df.index == cap
                     xi_df['is_vice_captain'] = xi_df.index == vc
                     
@@ -599,7 +610,10 @@ def main():
                         xi_ids_sim, bench_ids_sim = optimize_starting_xi(sim_df)
                         if xi_ids_sim:
                             xi_sim = sim_df.loc[xi_ids_sim].copy()
-                            cap_sim, vc_sim = select_captain_vice(xi_sim)
+                            cap_data_sim = select_captain_vice(xi_sim)
+                            cap_sim = cap_data_sim['safe_pick']['id']
+                            vc_sim = cap_data_sim['vice_picks'][0]['id']
+                            
                             xi_sim['is_captain'] = xi_sim.index == cap_sim
                             xi_sim['is_vice_captain'] = xi_sim.index == vc_sim
                             
