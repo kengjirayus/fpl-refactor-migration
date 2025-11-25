@@ -18,7 +18,7 @@ from fpl_logic import (
     engineer_features_enhanced, get_fixture_difficulty_matrix, find_rotation_pairs,
     optimize_wildcard_team, optimize_starting_xi, select_captain_vice,
     smart_bench_order, analyze_lineup_insights, calculate_transfer_roi,
-    suggest_transfers, POSITIONS, detect_fixture_swing
+    suggest_transfers, POSITIONS, detect_fixture_swing, plan_rolling_transfers
 )
 from ui_components import (
     display_user_friendly_table, display_pitch_view, add_global_css,
@@ -449,8 +449,45 @@ def main():
                         final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "กำไร (GW นี้)", "กำไร (3 GW)", "แต้มที่เสีย", "กำไรสุทธิ (GW นี้)"] if c in moves_disp.columns]
                         
                         display_user_friendly_table(moves_disp[final_cols], height=45+(len(moves_df)*35))
-                    else: st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")
+                    else:
+                        st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")
+                    
                     st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
+
+                # --- Multi-Week Transfer Planner ---
+                st.markdown("---")
+                with st.expander("🔮 Transfer Pipeline (Next 3 GWs)", expanded=True):
+                    st.markdown("แผนการย้ายตัวล่วงหน้า 3 สัปดาห์ (Rolling Simulation)")
+                    with st.spinner("Simulating future gameweeks..."):
+                        pipeline = plan_rolling_transfers(valid_ids, bank, free_transfers, feat, fixtures_df, teams, target_event)
+                        
+                        if pipeline:
+                            # Visualize Pipeline
+                            cols = st.columns(len(pipeline))
+                            cumulative_roi = 0.0
+                            
+                            for i, step in enumerate(pipeline):
+                                cumulative_roi += step.get('net_gain', 0.0)
+                                with cols[i]:
+                                    st.markdown(f"#### GW {step['gw']}")
+                                    if step['action'] == "TRANSFER":
+                                        st.success(f"**{step['action']}**")
+                                        st.caption(step['details'])
+                                        st.metric("Net Gain", f"{step['net_gain']:.1f}", delta_color="normal")
+                                    else:
+                                        st.info(f"**{step['action']}**")
+                                        st.caption(step['details'])
+                                        st.metric("Net Gain", "0.0", delta_color="off")
+                            
+                            st.markdown(f"**💰 Cumulative Net Gain (3 GWs):** `{cumulative_roi:+.1f} points`")
+                            if cumulative_roi > 5.0:
+                                st.success("🚀 แผนนี้ดูดีมาก! น่าจะโกยแต้มได้เยอะ")
+                            elif cumulative_roi > 0:
+                                st.info("✅ แผนนี้พอใช้ได้ ช่วยเพิ่มแต้มได้เล็กน้อย")
+                            else:
+                                st.warning("⚠️ แผนนี้อาจจะไม่คุ้มค่าความเสี่ยง หรือควรเก็บ FT ไว้ก่อน")
+                        else:
+                            st.warning("Could not generate a plan.")
 
                 # Simulation Mode
                 st.markdown("---")

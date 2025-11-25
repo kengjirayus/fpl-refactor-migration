@@ -766,6 +766,8 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
                 
                 if net_gain > (hit_cost if free_transfers == 0 else 0):
                     all_potential_moves.append({
+                        "out_id": out_id,
+                        "in_id": in_id,
                         "out_name": out_player['web_name'],
                         "out_cost": sell_price,
                         "in_name": best_in['web_name'],
@@ -799,6 +801,62 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
         seen_in.add(move['in_name'])
             
     return final_moves
+
+def plan_rolling_transfers(current_squad_ids: List[int], bank: float, free_transfers: int, all_players: pd.DataFrame, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int, horizon: int = 3) -> List[Dict]:
+    """
+    Simulates a rolling transfer strategy for the next 'horizon' gameweeks.
+    Decides whether to 'USE' or 'SAVE' FTs based on ROI.
+    """
+    plan = []
+    sim_squad = set(current_squad_ids)
+    sim_bank = bank
+    sim_ft = free_transfers
+    
+    # Threshold to trigger a transfer (Net Gain > Threshold)
+    # If FT=2, threshold is lower (use it or lose it). If FT=1, threshold is higher (save for mini-wildcard).
+    ROI_THRESHOLD_SAVE = 2.0 # If FT=1, need > 2.0 gain to use
+    ROI_THRESHOLD_USE = 0.5  # If FT>=2, need > 0.5 gain to use
+    
+    for step in range(horizon):
+        gw = current_event + step
+        
+        # 1. Get Suggestions for this simulated state
+        # We use 'Free Transfer' strategy to see best FT moves
+        suggestions = suggest_transfers(list(sim_squad), sim_bank, sim_ft, all_players, "Free Transfer", fixtures_df, teams_df, gw)
+        
+        action = {"gw": gw, "action": "HOLD", "details": "Save Free Transfer", "roi": 0.0, "net_gain": 0.0}
+        
+        if suggestions:
+            best_move = suggestions[0] # Best move by Net Gain
+            threshold = ROI_THRESHOLD_USE if sim_ft >= 2 else ROI_THRESHOLD_SAVE
+            
+            if best_move['net_gain'] >= threshold:
+                # Execute Transfer in Simulation
+                action = {
+                    "gw": gw,
+                    "action": "TRANSFER",
+                    "details": f"Sell {best_move['out_name']} -> Buy {best_move['in_name']}",
+                    "roi": best_move['roi_3gw'],
+                    "net_gain": best_move['net_gain'],
+                    "in_id": best_move['in_id'],
+                    "out_id": best_move['out_id'],
+                    "in_cost": best_move['in_cost'],
+                    "out_cost": best_move['out_cost']
+                }
+
+        plan.append(action)
+        
+        # Update State for next loop
+        if action['action'] == "TRANSFER":
+            if action['out_id'] in sim_squad:
+                sim_squad.remove(action['out_id'])
+            sim_squad.add(action['in_id'])
+            sim_bank += (action['out_cost'] - action['in_cost'])
+            sim_ft = max(1, sim_ft - 1) # Used 1 FT
+        else:
+            sim_ft = min(5, sim_ft + 1) # Saved FT, max 5
+            
+    return plan
 
 def optimize_wildcard_team(all_players: pd.DataFrame, budget: float) -> Optional[List[int]]:
     ids = list(all_players.index)
