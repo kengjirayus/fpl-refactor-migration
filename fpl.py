@@ -147,6 +147,11 @@ def main():
         st.stop()
         
     elements, teams, events, fixtures_df = build_master_tables(bootstrap, fixtures)
+    
+    # Drop unhashable columns from fixtures_df to prevent caching errors
+    if 'stats' in fixtures_df.columns:
+        fixtures_df = fixtures_df.drop(columns=['stats'])
+    
     cur_event, next_event = current_and_next_event(bootstrap.get("events", []))
     target_event = next_event or (cur_event + 1 if cur_event else 1)
     
