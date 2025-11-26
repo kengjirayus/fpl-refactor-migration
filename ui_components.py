@@ -542,7 +542,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.markdown("---")
 
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
-    st.caption("หมายเหตุ: ตารางนี้อาจยังแสดงไอคอนรูปเสีย 🖼️ หากไม่มีรูปใน API ครับ")
+    st.caption("ℹ️ **Range**: ช่วงคะแนนที่คาดว่าจะทำได้ (ต่ำสุด - สูงสุด) | **Risk**: ความเสี่ยง (🟢 ต่ำ, 🟡 ปานกลาง, 🔴 สูง)")
     
     # DEBUG: Check if set_piece_note is present
     # DEBUG: Check if set_piece_note is present
@@ -556,6 +556,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     if "xMins" in feat_df.columns: cols_to_select.append("xMins")
     if "set_piece_roles" in feat_df.columns: cols_to_select.append("set_piece_roles")
     if "set_piece_note" in feat_df.columns: cols_to_select.append("set_piece_note")
+    if "risk_level" in feat_df.columns: cols_to_select.append("risk_level")
+    if "floor" in feat_df.columns: cols_to_select.append("floor")
+    if "ceiling" in feat_df.columns: cols_to_select.append("ceiling")
     
     top_tbl = feat_df[cols_to_select].copy()
     top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
@@ -573,6 +576,15 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         top_tbl["form_display"] = top_tbl["form"].astype(str)
     else:
         top_tbl["form_display"] = "-"
+        
+    # Create Range Column
+    if "floor" in top_tbl.columns and "ceiling" in top_tbl.columns:
+        top_tbl["projection_range"] = top_tbl.apply(lambda x: f"{x['floor']:.1f} - {x['ceiling']:.1f}", axis=1)
+        
+    # Add Emoji to Risk Level
+    if "risk_level" in top_tbl.columns:
+        risk_map = {"LOW": "🟢 Low", "MEDIUM": "🟡 Med", "HIGH": "🔴 High"}
+        top_tbl["risk_display"] = top_tbl["risk_level"].map(risk_map)
     
     top_players = top_tbl.sort_values("pred_points", ascending=False).head(20)
     
@@ -587,6 +599,8 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "xMins", "form_display", "fixture_ease", "pred_points"]
     if "xMins" not in top_players.columns: cols_to_show.remove("xMins")
     if "Role" in top_players.columns: cols_to_show.append("Role")
+    if "projection_range" in top_players.columns: cols_to_show.append("projection_range")
+    if "risk_display" in top_players.columns: cols_to_show.append("risk_display")
     
     st.data_editor(
         top_players[cols_to_show],
@@ -620,6 +634,12 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
             ),
             "pred_points": st.column_config.NumberColumn(
                 "คะแนนคาดการณ์", format="%.1f"
+            ),
+            "projection_range": st.column_config.TextColumn(
+                "Range", help="Floor - Ceiling Projection"
+            ),
+            "risk_display": st.column_config.TextColumn(
+                "Risk", help="Volatility Risk"
             ),
         },
         column_order=tuple(["ลำดับ"] + cols_to_show),
@@ -735,33 +755,40 @@ def display_player_comparison(player1_data, player2_data):
         except:
             return 0.0
 
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatterpolar(
-      r=[get_val(player1_data, category_map[c]) for c in categories],
-      theta=categories,
-      fill='toself',
-      name=player1_data.get('web_name', 'Player 1'),
-      line_color='#1f77b4', # Blue
-      fillcolor='rgba(31, 119, 180, 0.3)'
-    ))
-    
-    fig.add_trace(go.Scatterpolar(
-      r=[get_val(player2_data, category_map[c]) for c in categories],
-      theta=categories,
-      fill='toself',
-      name=player2_data.get('web_name', 'Player 2'),
-      line_color='#ff7f0e', # Orange
-      fillcolor='rgba(255, 127, 14, 0.3)'
-    ))
+    def get_range(row, col):
+        val = get_val(row, col)
+        if col == 'pred_points':
+            floor = float(row.get('floor', val))
+            ceiling = float(row.get('ceiling', val))
+            return floor, ceiling
+        return val, val
 
-    fig.update_layout(
-      polar=dict(radialaxis=dict(visible=True, range=[0, 10])), # Adjust scale if needed
-      showlegend=True,
-      margin=dict(l=40, r=40, t=40, b=40)
+    p1_vals = [get_val(player1_data, c) for c in categories]
+    p2_vals = [get_val(player2_data, c) for c in categories]
+    
+    p1_ranges = [get_range(player1_data, c) for c in categories]
+    p2_ranges = [get_range(player2_data, c) for c in categories]
+    
+    chart_data = pd.DataFrame({
+        'Player': [p1_name]*len(categories) + [p2_name]*len(categories),
+        'Category': categories * 2,
+        'Value': p1_vals + p2_vals,
+        'Min': [r[0] for r in p1_ranges] + [r[0] for r in p2_ranges],
+        'Max': [r[1] for r in p1_ranges] + [r[1] for r in p2_ranges]
+    })
+    
+    base = alt.Chart(chart_data).encode(
+        x=alt.X('Player:N', axis=None),
+        color=alt.Color('Player:N'),
+        column=alt.Column('Category:N', header=alt.Header(title=None, labelOrient="bottom"))
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    bars = base.mark_bar().encode(y=alt.Y('Value:Q', title=None))
+    error_bars = base.mark_rule(strokeWidth=2).encode(y='Min:Q', y2='Max:Q')
+    
+    chart = (bars + error_bars).properties(width=100, height=200)
+    
+    st.altair_chart(chart)
     
     # --- NEW: Home/Away Split Chart ---
     st.markdown("#### 🏠 vs 🚌 Home/Away Performance")

@@ -402,6 +402,25 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
         return final_pred
 
     elements['pred_points'] = elements.apply(calculate_dynamic_pred, axis=1)
+    
+    # --- NEW: Ceiling/Floor Projection ---
+    # Calculate Standard Deviation from Variance
+    elements['points_sd'] = np.sqrt(elements['points_variance'])
+    
+    # Calculate Floor and Ceiling
+    elements['floor'] = elements['pred_points'] - elements['points_sd']
+    elements['ceiling'] = elements['pred_points'] + elements['points_sd']
+    
+    # Ensure non-negative floor
+    elements['floor'] = elements['floor'].apply(lambda x: max(0, x))
+    
+    # Determine Risk Level
+    def get_risk_level(sd):
+        if sd < 2.0: return "LOW"
+        elif sd < 4.0: return "MEDIUM"
+        else: return "HIGH"
+        
+    elements['risk_level'] = elements['points_sd'].apply(get_risk_level)
     elements['selection_score'] = elements.apply(calculate_smart_selection_score, axis=1)
 
     return elements

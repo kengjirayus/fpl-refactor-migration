@@ -496,6 +496,18 @@ def main():
                         moves_df.index += 1
                         moves_df.index.name = "ลำดับ"
                         
+                        # --- NEW: High Risk Warning ---
+                        # Map risk_level from feat to moves_df
+                        if 'risk_level' in feat.columns:
+                            risk_map = feat.set_index('id')['risk_level'].to_dict()
+                            moves_df['in_risk'] = moves_df['in_id'].map(risk_map)
+                            
+                            # Add warning to 'in_name'
+                            moves_df['in_name'] = moves_df.apply(
+                                lambda x: f"{x['in_name']} ⚠️ High Risk" if x.get('in_risk') == 'HIGH' else x['in_name'],
+                                axis=1
+                            )
+                        
                         total_out = moves_df['out_cost'].sum()
                         total_in = moves_df['in_cost'].sum()
                         total_hit = moves_df['hit_cost'].sum()
