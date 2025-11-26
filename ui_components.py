@@ -685,15 +685,33 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
 
     st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
     st.markdown("🪄 เอาเมาส์ไปชี้เพื่อดูชื่อนักเตะได้เลย!แต่ละสีบอกตำแหน่ง ส่วนจุดใกล้มุมซ้ายบนที่สุดคือของดีราคาถูกในตำแหน่งนั้นๆ 💰")
+    
+    # --- NEW: Position Filter ---
+    all_positions = ['GK', 'DEF', 'MID', 'FWD']
+    selected_positions = st.multiselect(
+        "เลือกตำแหน่งที่ต้องการแสดง:",
+        options=all_positions,
+        default=all_positions
+    )
+    
     value_df = feat_df[feat_df['pred_points'] > 1.2].copy()
     value_df['price'] = value_df['now_cost'] / 10.0
     value_df['position'] = value_df['element_type'].map(POSITIONS)
-    chart = alt.Chart(value_df).mark_circle(size=80, opacity=0.85, stroke='#CCCCCC',strokeWidth=0.8).encode(
-        x=alt.X('price', title='ราคา (£)'), y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
-        color=alt.Color('position', scale=alt.Scale(domain=['GK', 'DEF', 'MID', 'FWD'], range=['#EE7733', '#0077BB', '#CC3311', '#33BBEE'])),
-        tooltip=['web_name', 'team_short', 'position', 'price', 'pred_points']
-    ).interactive()
-    st.altair_chart(chart, use_container_width=True)
+    
+    # Filter based on selection
+    if selected_positions:
+        value_df = value_df[value_df['position'].isin(selected_positions)]
+    else:
+        st.info("กรุณาเลือกอย่างน้อย 1 ตำแหน่งเพื่อแสดงกราฟ")
+        value_df = pd.DataFrame()
+        
+    if not value_df.empty:
+        chart = alt.Chart(value_df).mark_circle(size=80, opacity=0.85, stroke='#CCCCCC',strokeWidth=0.8).encode(
+            x=alt.X('price', title='ราคา (£)'), y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
+            color=alt.Color('position', scale=alt.Scale(domain=['GK', 'DEF', 'MID', 'FWD'], range=['#EE7733', '#0077BB', '#CC3311', '#33BBEE'])),
+            tooltip=['web_name', 'team_short', 'position', 'price', 'pred_points']
+        ).interactive()
+        st.altair_chart(chart, use_container_width=True)
     st.markdown("---")
     
     # --- Player Comparison Section ---
