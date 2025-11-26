@@ -26,6 +26,13 @@ from ui_components import (
     display_injury_watch, display_loading_overlay
 )
 
+def translate_transfer_text(text):
+    return (
+        text.replace("Sell", "ขายออก")
+            .replace("Buy", "ซื้อเข้า")
+            .replace("→", " ➜ ")
+    )
+
 def main():
     st.title("🏟️ FPL WIZ จัดตัวนักเตะด้วย AI | FPL WIZ AI-Powered 🤖")
     st.markdown("เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ FPL ในแต่ละสัปดาห์ 🧠")
@@ -375,19 +382,30 @@ def main():
                             )
 
                     # --- Enhanced Captain Display ---
-                    st.markdown("### 🧢 Captain Recommendation")
+                    st.markdown("### 🧢 คำแนะนำกัปตัน (Captain Recommendation)")
                     c1, c2 = st.columns(2)
                     
                     with c1:
                         safe = cap_data['safe_pick']
-                        st.success(f"🛡️ **Safe Pick**\n\n**{safe['name']}**\n\nEV: {safe['ev']:.2f} | Risk: {safe['risk']:.2f}")
+                        st.success(
+                            f"🛡️ **ตัวเลือกปลอดภัย (Safe Pick)**\n\n"
+                            f"**{safe['name']}**\n\n"
+                            f"ค่าคาดหวังแต้ม: {safe['ev']:.2f} | ความเสี่ยง: {safe['risk']:.2f}"
+                        )
                         
                     with c2:
                         diff = cap_data['diff_pick']
-                        st.info(f"🎲 **Differential**\n\n**{diff['name']}**\n\nOwn: {diff['ownership']}% | Diff Score: {diff['diff_score']:.2f}")
-                        
+                        st.info(
+                            f"🎲 **ตัวเลือกสายวัดใจ (Differential)**\n\n"
+                            f"**{diff['name']}**\n\n"
+                            f"ความนิยม: {diff['ownership']}% | คะแนนความต่าง: {diff['diff_score']:.2f}"
+                        )
+
                     vc_names = ", ".join([v['name'] for v in cap_data['vice_picks']])
-                    st.caption(f"Vice-Captain Options: {vc_names}")
+                    st.markdown(
+                        f"<span style='font-weight: 600; color: #333333;'>ตัวเลือก Vice-Captain: {vc_names}</span>",
+                        unsafe_allow_html=True
+                    )
                     
                     xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
                     xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
@@ -430,6 +448,82 @@ def main():
                         height=175
                     )
 
+                # Suggestions
+                    st.subheader("🔄 แนะนำการย้ายตัว (Suggested Transfers)")
+                    st.markdown("💡 คำแนะนำนี้ใช้ **ราคาขายจริง (Selling Price)** จาก FPL API ของคุณ")
+                
+                with st.spinner("Analyzing potential transfers..."):
+                    # Pass picks_data to enable Price Lock Analysis
+                    moves = suggest_transfers(valid_ids, bank, free_transfers, feat, transfer_strategy, fixtures_df, teams, target_event, picks_data=picks_data)
+                    if moves:
+                        moves_df = pd.DataFrame(moves)
+                        moves_df.index += 1
+                        moves_df.index.name = "ลำดับ"
+                        
+                        total_out = moves_df['out_cost'].sum()
+                        total_in = moves_df['in_cost'].sum()
+                        total_hit = moves_df['hit_cost'].sum()
+                        st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m** | เสียแต้ม: **-{total_hit}**")
+                        
+                        # Add Price Lock Warning to 'Out' column
+                        if 'price_loss' in moves_df.columns:
+                            moves_df['out_name'] = moves_df.apply(
+                                lambda x: f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m) ⚠️" if x.get('price_loss', 0) > 0.3 
+                                else (f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m)" if x.get('price_loss', 0) > 0 else x['out_name']),
+                                axis=1
+                            )
+
+                        cols_ren = {
+                            "out_name": "ขายออก (Out)", "out_cost": "ราคาขาย (£)",
+                            "in_name": "ซื้อเข้า (In)", "in_cost": "ราคาซื้อ (£)",
+                            "delta_points": "กำไร (GW นี้)", "roi_3gw": "กำไร (3 GW)",
+                            "hit_cost": "แต้มที่เสีย", "net_gain": "กำไรสุทธิ (GW นี้)"
+                        }
+                        moves_disp = moves_df.rename(columns=cols_ren)
+                        final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "กำไร (GW นี้)", "กำไร (3 GW)", "แต้มที่เสีย", "กำไรสุทธิ (GW นี้)"] if c in moves_disp.columns]
+                        
+                        display_user_friendly_table(moves_disp[final_cols], height=45+(len(moves_df)*35))
+                    else:
+                        st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")
+                    
+                    st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
+                
+                # --- Multi-Week Transfer Planner ---
+                with st.expander("🔮 แผนเปลี่ยนตัวล่วงหน้า (3 เกมวีค)", expanded=True):
+                    st.markdown("จำลองแผนการเปลี่ยนตัวล่วงหน้า 3 สัปดาห์ พร้อมประเมินผลต่างแต้มที่คาดว่าได้รับ")
+                    
+                    with st.spinner("กำลังจำลองแผนการเล่นในอนาคต..."):
+                        pipeline = plan_rolling_transfers(valid_ids, bank, free_transfers, feat, fixtures_df, teams, target_event)
+                        
+                        if pipeline:
+                            cols = st.columns(len(pipeline))
+                            cumulative_roi = 0.0
+                            
+                            for i, step in enumerate(pipeline):
+                                cumulative_roi += step.get('net_gain', 0.0)
+                                with cols[i]:
+                                    st.markdown(f"#### GW {step['gw']}")
+                                    
+                                    if step['action'] == "TRANSFER":
+                                        st.success("🔁 เปลี่ยนตัว")
+                                        st.markdown(f"##### {translate_transfer_text(step['details'])}")
+                                        st.metric("แต้มสุทธิที่คาดว่าจะได้", f"{step['net_gain']:.1f}")
+                                    else:
+                                        st.info("⏸ เก็บ FT")
+                                        st.markdown(f"##### {translate_transfer_text(step['details'])}")
+                                        st.metric("แต้มสุทธิที่คาดว่าจะได้", "0.0")
+
+                            st.markdown(f"#### 💰 แต้มรวมตลอด 3 GW:** `{cumulative_roi:+.1f} คะแนน`")
+
+                            if cumulative_roi > 5.0:
+                                st.success("🚀 แผนนี้มีศักยภาพสูง เหมาะกับการวางแผนล่วงหน้า")
+                            elif cumulative_roi > 0:
+                                st.info("✅ แผนนี้ช่วยเพิ่มแต้มได้ แต่ยังไม่เด่นชัด")
+                            else:
+                                st.warning("⚠️ แผนนี้ยังไม่คุ้ม อาจพิจารณาเก็บ Free Transfer ไว้ก่อน")
+                        else:
+                            st.warning("ไม่สามารถสร้างแผนการเปลี่ยนตัวได้")
+                
                 # ROI Calculator
                 st.markdown("---")
                 st.subheader("🧮 คำนวณความคุ้มค่าการย้ายตัว (Transfer ROI Calculator)")
@@ -472,88 +566,12 @@ def main():
                         else:
                             st.error(f"❌ **ไม่แนะนำ** {feat.loc[p_out_id, 'web_name']} ยังน่าจะทำแต้มได้ดีกว่า หรือไม่คุ้มค่า Hit")
 
-                # Suggestions
-                st.markdown("---")
-                st.subheader("🔄 แนะนำการย้ายตัว (Suggested Transfers)")
-                st.markdown("💡 คำแนะนำนี้ใช้ **ราคาขายจริง (Selling Price)** จาก FPL API ของคุณ")
-                
-                with st.spinner("Analyzing potential transfers..."):
-                    # Pass picks_data to enable Price Lock Analysis
-                    moves = suggest_transfers(valid_ids, bank, free_transfers, feat, transfer_strategy, fixtures_df, teams, target_event, picks_data=picks_data)
-                    if moves:
-                        moves_df = pd.DataFrame(moves)
-                        moves_df.index += 1
-                        moves_df.index.name = "ลำดับ"
-                        
-                        total_out = moves_df['out_cost'].sum()
-                        total_in = moves_df['in_cost'].sum()
-                        total_hit = moves_df['hit_cost'].sum()
-                        st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m** | เสียแต้ม: **-{total_hit}**")
-                        
-                        # Add Price Lock Warning to 'Out' column
-                        if 'price_loss' in moves_df.columns:
-                            moves_df['out_name'] = moves_df.apply(
-                                lambda x: f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m) ⚠️" if x.get('price_loss', 0) > 0.3 
-                                else (f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m)" if x.get('price_loss', 0) > 0 else x['out_name']),
-                                axis=1
-                            )
-
-                        cols_ren = {
-                            "out_name": "ขายออก (Out)", "out_cost": "ราคาขาย (£)",
-                            "in_name": "ซื้อเข้า (In)", "in_cost": "ราคาซื้อ (£)",
-                            "delta_points": "กำไร (GW นี้)", "roi_3gw": "กำไร (3 GW)",
-                            "hit_cost": "แต้มที่เสีย", "net_gain": "กำไรสุทธิ (GW นี้)"
-                        }
-                        moves_disp = moves_df.rename(columns=cols_ren)
-                        final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "กำไร (GW นี้)", "กำไร (3 GW)", "แต้มที่เสีย", "กำไรสุทธิ (GW นี้)"] if c in moves_disp.columns]
-                        
-                        display_user_friendly_table(moves_disp[final_cols], height=45+(len(moves_df)*35))
-                    else:
-                        st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")
-                    
-                    st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
-
-                # --- Multi-Week Transfer Planner ---
-                st.markdown("---")
-                with st.expander("🔮 Transfer Pipeline (Next 3 GWs)", expanded=True):
-                    st.markdown("แผนการย้ายตัวล่วงหน้า 3 สัปดาห์ (Rolling Simulation)")
-                    with st.spinner("Simulating future gameweeks..."):
-                        pipeline = plan_rolling_transfers(valid_ids, bank, free_transfers, feat, fixtures_df, teams, target_event)
-                        
-                        if pipeline:
-                            # Visualize Pipeline
-                            cols = st.columns(len(pipeline))
-                            cumulative_roi = 0.0
-                            
-                            for i, step in enumerate(pipeline):
-                                cumulative_roi += step.get('net_gain', 0.0)
-                                with cols[i]:
-                                    st.markdown(f"#### GW {step['gw']}")
-                                    if step['action'] == "TRANSFER":
-                                        st.success(f"**{step['action']}**")
-                                        st.caption(step['details'])
-                                        st.metric("Net Gain", f"{step['net_gain']:.1f}", delta_color="normal")
-                                    else:
-                                        st.info(f"**{step['action']}**")
-                                        st.caption(step['details'])
-                                        st.metric("Net Gain", "0.0", delta_color="off")
-                            
-                            st.markdown(f"**💰 Cumulative Net Gain (3 GWs):** `{cumulative_roi:+.1f} points`")
-                            if cumulative_roi > 5.0:
-                                st.success("🚀 แผนนี้ดูดีมาก! น่าจะโกยแต้มได้เยอะ")
-                            elif cumulative_roi > 0:
-                                st.info("✅ แผนนี้พอใช้ได้ ช่วยเพิ่มแต้มได้เล็กน้อย")
-                            else:
-                                st.warning("⚠️ แผนนี้อาจจะไม่คุ้มค่าความเสี่ยง หรือควรเก็บ FT ไว้ก่อน")
-                        else:
-                            st.warning("Could not generate a plan.")
-
                 # Simulation Mode
                 st.markdown("---")
                 st.subheader("🛠️ ทดลองจัดทีม (Simulation Mode)")
                 st.markdown("ใช้ส่วนนี้เพื่อจำลองการย้ายทีมของคุณ *หลังจาก* ที่คุณกดยืนยันใน FPL แล้ว แต่ในนี้ยังไม่อัปเดตตาม")
                 
-                if st.button("♻️ Reset to Current API Team"):
+                if st.button("♻️ ล้างค่าสู่ทีมปัจจุบัน"):
                     st.session_state.simulated_squad_ids = valid_ids
                     st.rerun()
 
