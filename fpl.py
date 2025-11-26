@@ -181,6 +181,8 @@ def main():
     # Pass cur_event for avg_minutes fallback logic
     feat = engineer_features_enhanced(elements, teams, nf, us_players, my_team_ids=None, gameweek=cur_event or 1)
     feat.set_index('id', inplace=True)
+    # feat.set_index('id', inplace=True) # Already set above if needed, but line 183 does it.
+    # st.write("FPL.py Feat Columns:", feat.columns.tolist()) # REMOVED DEBUG PRINT
 
     # Create maps
     feat_sorted = feat.sort_values('web_name')
@@ -281,7 +283,9 @@ def main():
                     xi_df['is_captain'] = xi_df.index == cap
                     xi_df['is_vice_captain'] = xi_df.index == vc
                     
+                    # Revert tabs to make Pitch View default as requested
                     t1, t2 = st.tabs(["Pitch View ⚽", "List View 📋"])
+                    
                     with t1: 
                         with st.container(border=False):
                             display_pitch_view(xi_df, "✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)")
@@ -292,7 +296,23 @@ def main():
                             xi_disp['pos'] = xi_disp['element_type'].map(POSITIONS)
                             xi_disp['pos'] = pd.Categorical(xi_disp['pos'], categories=['GK', 'DEF', 'MID', 'FWD'], ordered=True)
                             xi_disp = xi_disp.sort_values('pos')
-                            display_user_friendly_table(xi_disp[['web_name', 'team_short', 'pos', 'pred_points']], "", height=420)
+                            
+                            # Add Role column
+                            cols = ['web_name', 'team_short', 'pos', 'pred_points']
+                            
+                            # Update Web Name with Icon
+                            if "set_piece_roles" in xi_disp.columns:
+                                xi_disp["web_name"] = xi_disp.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1)
+
+                            if 'set_piece_note' in xi_disp.columns:
+                                xi_disp.rename(columns={'set_piece_note': 'Role'}, inplace=True)
+                                cols.insert(3, 'Role')
+                                
+                            display_user_friendly_table(xi_disp[cols], "", height=420)
+                            
+                    with t2: 
+                        with st.container(border=False):
+                            display_pitch_view(xi_df, "✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)")
                     
                     st.success(f"👑 Captain: **{xi_df.loc[cap]['web_name']}** | Vice-Captain: **{xi_df.loc[vc]['web_name']}**")
                     
@@ -305,6 +325,8 @@ def main():
                     if insights: st.info("💡 **คำแนะนำ:**\n\n" + "\n\n".join([f"- {i}" for i in insights]))
                     
                     bench_display = ordered_bench[['web_name', 'team_short', 'pos', 'pred_points']].copy().reset_index(drop=True)
+                    if "set_piece_roles" in ordered_bench.columns:
+                        bench_display["web_name"] = ordered_bench.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1).reset_index(drop=True)
                     bench_display.index += 1
                     display_user_friendly_table(bench_display, "ตัวสำรอง (เรียงตามลำดับ)", height=175)
                     
@@ -375,7 +397,17 @@ def main():
                             position_order = ['GK', 'DEF', 'MID', 'FWD']
                             xi_df_list['pos'] = pd.Categorical(xi_df_list['pos'], categories=position_order, ordered=True)
                             xi_df_list = xi_df_list.sort_values('pos')
-                            xi_display_df = xi_df_list[['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']]
+                            
+                            # Update Web Name with Icon
+                            if "set_piece_roles" in xi_df_list.columns:
+                                xi_df_list["web_name"] = xi_df_list.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1)
+
+                            cols = ['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']
+                            if 'set_piece_note' in xi_df_list.columns:
+                                xi_df_list.rename(columns={'set_piece_note': 'Role'}, inplace=True)
+                                cols.insert(3, 'Role')
+
+                            xi_display_df = xi_df_list[cols]
                             display_user_friendly_table(
                                 df=xi_display_df,
                                 title="", # Title is handled by tab
@@ -439,6 +471,9 @@ def main():
                     
                         # --- ปรับปรุง Bench Display (เริ่ม) ---
                     bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']].copy()
+                    if "set_piece_roles" in ordered_bench_df.columns:
+                        bench_display_df["web_name"] = ordered_bench_df.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1)
+                    
                     bench_display_df.reset_index(drop=True, inplace=True)
                     bench_display_df.index = bench_display_df.index + 1
                         # --- ปรับปรุง Bench Display (จบ) ---
@@ -693,7 +728,17 @@ def main():
                                     xi_disp_sim['pos'] = xi_disp_sim['element_type'].map(POSITIONS)
                                     xi_disp_sim['pos'] = pd.Categorical(xi_disp_sim['pos'], categories=['GK', 'DEF', 'MID', 'FWD'], ordered=True)
                                     xi_disp_sim = xi_disp_sim.sort_values('pos')
-                                    display_user_friendly_table(xi_disp_sim[['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']], "", height=420)
+                                    
+                                    # Update Web Name with Icon
+                                    if "set_piece_roles" in xi_disp_sim.columns:
+                                        xi_disp_sim["web_name"] = xi_disp_sim.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1)
+
+                                    cols = ['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']
+                                    if 'set_piece_note' in xi_disp_sim.columns:
+                                        xi_disp_sim.rename(columns={'set_piece_note': 'Role'}, inplace=True)
+                                        cols.insert(3, 'Role')
+                                        
+                                    display_user_friendly_table(xi_disp_sim[cols], "", height=420)
                             
                             st.success(f"👑 Captain (Simulated): **{xi_sim.loc[cap_sim]['web_name']}** | Vice: **{xi_sim.loc[vc_sim]['web_name']}**")
                             
@@ -705,6 +750,9 @@ def main():
                             if insights: st.info("💡 **คำแนะนำ:**\n\n" + "\n\n".join([f"- {i}" for i in insights]))
                             
                             bench_disp_sim = ordered_bench_sim[['web_name', 'team_short', 'pos', 'pred_points', 'chance_of_playing_next_round']].copy()
+                            if "set_piece_roles" in ordered_bench_sim.columns:
+                                bench_disp_sim["web_name"] = ordered_bench_sim.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1)
+
                             bench_disp_sim.reset_index(drop=True, inplace=True)
                             bench_disp_sim.index = bench_disp_sim.index + 1
                             

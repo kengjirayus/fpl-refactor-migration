@@ -166,6 +166,41 @@ def calculate_smart_selection_score(player_row):
     
     return score
 
+def analyze_set_piece_role(row: pd.Series) -> Tuple[List[str], str]:
+    """
+    Analyzes set piece roles based on API order fields.
+    Returns: (List of roles, Note string)
+    """
+    roles = []
+    notes = []
+    
+    # Penalties (Order 1 = Primary, 2 = Secondary)
+    pen_order = row.get('penalties_order')
+    if pd.notnull(pen_order):
+        if pen_order == 1:
+            roles.append('Penalty')
+            notes.append("Primary Penalty Taker")
+        elif pen_order <= 2:
+            notes.append("Backup Penalty Taker")
+            
+    # Direct Free Kicks
+    fk_order = row.get('direct_freekicks_order')
+    if pd.notnull(fk_order):
+        if fk_order == 1:
+            roles.append('Free Kick')
+            notes.append("Direct Free Kick Taker")
+            
+    # Corners / Indirect FK
+    corner_order = row.get('corners_and_indirect_freekicks_order')
+    if pd.notnull(corner_order):
+        if corner_order == 1:
+            roles.append('Corner')
+            notes.append("Primary Corner Taker")
+        elif corner_order <= 2:
+            notes.append("Shared Corner Duties")
+            
+    return roles, " | ".join(notes)
+
 def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame, understat_players: pd.DataFrame, my_team_ids: List[int] = None, gameweek: int = 1) -> pd.DataFrame:
     elements = elements.copy()
     
@@ -237,7 +272,8 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
 
     cols_to_process = ["form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", 
                        "minutes", "goals_scored", "assists", "clean_sheets", "cost_change_event",
-                       "cost_change_start", "transfers_in_event", "transfers_out_event", "code"]
+                       "cost_change_start", "transfers_in_event", "transfers_out_event", "code",
+                       "threat", "influence", "creativity"]
     for col in cols_to_process:
         if col in elements.columns:
             elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
@@ -297,83 +333,73 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
 
     # --- UPGRADE: xMins Approximation ---
     # xMins = min(90, avg_minutes * play_prob)
-    # play_prob is already 0.0-1.0 derived from chance_of_playing_next_round
-    elements['xMins'] = elements.apply(lambda row: min(90, row.get('avg_minutes', 0) * row.get('play_prob', 0)), axis=1).astype(int)
+    # --- UPGRADE: xMins Approximation ---
+    # xMins = min(90, avg_minutes * play_prob)
+    elements['xMins'] = elements.apply(lambda x: min(90, x['avg_minutes'] * x['play_prob']), axis=1)
     
-    # --- UPGRADE: Prediction Logic ---
+    # --- NEW: Set Piece Intelligence v2 ---
+    # Apply analyze_set_piece_role to each row
+    sp_analysis = elements.apply(analyze_set_piece_role, axis=1)
+    elements['set_piece_roles'] = sp_analysis.apply(lambda x: x[0])
+    elements['set_piece_note'] = sp_analysis.apply(lambda x: x[1])
     
-    # --- UPGRADE: Prediction Logic ---
+    # Calculate Aerial Threat Score
+    # Threat per 90 > 20 for Defenders/Mids is good
+    # Element Type: 1=GKP, 2=DEF, 3=MID, 4=FWD
+    def get_aerial_threat(row):
+        threat_per_90 = (row['threat'] / row['minutes']) * 90 if row['minutes'] > 0 else 0
+        if row['element_type'] == 2 and threat_per_90 > 15: # Defender with high threat
+            return 1
+        if row['element_type'] == 3 and threat_per_90 > 25: # Midfielder (e.g. Soucek)
+            return 1
+        if row['element_type'] == 4 and threat_per_90 > 40: # Target Man
+            return 1
+        return 0
+        
+    elements['is_aerial_threat'] = elements.apply(get_aerial_threat, axis=1)
+    
+    # --- Dynamic Prediction Calculation ---
     def calculate_dynamic_pred(row):
         score = 0.0
         
         # 1. Base Points (from API)
-        score += float(row.get('pred_points', 0)) * 0.4
+        # Use base_xP calculated earlier
+        base_score = float(row.get('base_xP', 0)) * pos_mult[int(row['element_type'])-1]
         
-        # 2. Form
-        score += float(row.get('form', 0)) * 0.15
-        
-        # 3. Granular Fixture Difficulty
+        # 2. Fixture Difficulty Adjustment
         pos = row.get('element_type', 3)
         if pos in [1, 2]: # GK, DEF -> Want weak Opponent Attack
             fix_ease = row.get('fixture_ease_def', row.get('avg_fixture_ease', 0))
         else: # MID, FWD -> Want weak Opponent Defense
             fix_ease = row.get('fixture_ease_att', row.get('avg_fixture_ease', 0))
             
-        score += fix_ease * 10 * 0.15 # Increased weight for granular difficulty
-        
-        # 4. xG/xA Bonus
-        if row.get('xG', 0) > 0 or row.get('xA', 0) > 0:
-            mins = float(row.get('minutes', 0))
-            games = max(1, mins / 90.0)
-            xgi_per_90 = (row.get('xG', 0) * 5 + row.get('xA', 0) * 3) / games
-            score += xgi_per_90 * 0.3
+        if fix_ease > 4: base_score *= 1.1
+        elif fix_ease < 2: base_score *= 0.9
             
-        # 5. Set Piece Bonus (Dynamic Version)
-        team_short = row.get('team_short', '')
-        from unidecode import unidecode
-        web_name_clean = unidecode(str(row.get('web_name', ''))).lower().strip()
+        # 3. Set Piece Bonus (Dynamic Version)
+        sp_bonus = 0.0
+        roles = row.get('set_piece_roles', [])
+        if 'Penalty' in roles: sp_bonus += 1.0
+        if 'Free Kick' in roles: sp_bonus += 0.4
+        if 'Corner' in roles: sp_bonus += 0.3
         
-        # เช็คจาก Map ที่สร้างจาก API
-        if team_short in dynamic_penalty_takers:
-            team_takers = dynamic_penalty_takers[team_short]
-            
-            # ถ้าเป็นมือ 1 (คนแรกใน list)
-            if len(team_takers) > 0 and web_name_clean == team_takers[0]:
-                score += 0.8
-            # ถ้าเป็นมือ 2 (คนที่สองใน list)
-            elif len(team_takers) > 1 and web_name_clean == team_takers[1]:
-                score += 0.4
+        # Aerial Threat Bonus
+        if row.get('is_aerial_threat', 0): sp_bonus += 0.2
         
-        # 6. xMins Penalty (Availability)
-        # 6. xMins Penalty (Availability & Rotation)
-        # Use xMins / 90.0 as the multiplier
-        x_mins = float(row.get('xMins', 0))
-        play_prob = float(row.get('play_prob', 1.0))
+        # 4. Apply xMins scaling to the total potential
+        # (Base + SP Bonus) * Availability
+        final_pred = (base_score + sp_bonus) * (row['xMins'] / 90.0)
         
-        if play_prob == 0: 
-            score = 0
-        else:
-            # If xMins is 0 (e.g. new player or no history), fallback to play_prob logic
-            if x_mins == 0 and play_prob > 0:
-                 if play_prob < 0.5: score *= 0.2
-                 elif play_prob < 0.75: score *= 0.6
-                 else: score *= (0.7 + 0.3 * play_prob)
-            else:
-                # Use xMins ratio
-                # Example: xMins = 60 -> score *= 0.66
-                # Example: xMins = 90 -> score *= 1.0
-                score *= (x_mins / 90.0)
-        
-        # 7. DGW/BGW
+        # 5. DGW/BGW
         num_fix = row.get('num_fixtures', 1)
-        if num_fix == 2: score *= 1.6 # DGW Bonus
-        elif num_fix == 0: score = 0 # BGW
+        if num_fix == 2: final_pred *= 1.6 # DGW Bonus
+        elif num_fix == 0: final_pred = 0 # BGW
         
-        # 8. Venue Adjustment (Home/Away)
+        # 6. Venue Adjustment (Home/Away)
         venue_mult = float(row.get('venue_multiplier', 1.0))
-        score *= venue_mult
+        final_pred *= venue_mult
         
-        return score
+        return final_pred
 
     elements['pred_points'] = elements.apply(calculate_dynamic_pred, axis=1)
     elements['selection_score'] = elements.apply(calculate_smart_selection_score, axis=1)

@@ -544,17 +544,27 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
     st.caption("หมายเหตุ: ตารางนี้อาจยังแสดงไอคอนรูปเสีย 🖼️ หากไม่มีรูปใน API ครับ")
     
+    # DEBUG: Check if set_piece_note is present
+    # DEBUG: Check if set_piece_note is present
+    # st.write("Debug Columns:", feat_df.columns.tolist()) # REMOVED DEBUG PRINT
+    
     # Include weighted_form and form_trend
     cols_to_select = ["photo_url", "web_name", "team_short", "element_type", "now_cost", "avg_fixture_ease", "pred_points"]
     if "weighted_form" in feat_df.columns: cols_to_select.append("weighted_form")
     if "form_trend" in feat_df.columns: cols_to_select.append("form_trend")
     if "form" in feat_df.columns and "weighted_form" not in feat_df.columns: cols_to_select.append("form")
     if "xMins" in feat_df.columns: cols_to_select.append("xMins")
+    if "set_piece_roles" in feat_df.columns: cols_to_select.append("set_piece_roles")
+    if "set_piece_note" in feat_df.columns: cols_to_select.append("set_piece_note")
     
     top_tbl = feat_df[cols_to_select].copy()
     top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
     top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
     top_tbl["price"] = (top_tbl["price"] / 10.0)
+    
+    # Update Web Name with Icon
+    if "set_piece_roles" in top_tbl.columns:
+        top_tbl["web_name"] = top_tbl.apply(lambda x: f"{x['web_name']} 🎯" if x['set_piece_roles'] else x['web_name'], axis=1)
     
     # Combine Form and Trend
     if "weighted_form" in top_tbl.columns and "form_trend" in top_tbl.columns:
@@ -570,8 +580,13 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     top_players.index = np.arange(1, len(top_players) + 1)
     top_players.index.name = "ลำดับ"
     
+    # Rename set_piece_note to Role for display
+    if "set_piece_note" in top_players.columns:
+        top_players.rename(columns={"set_piece_note": "Role"}, inplace=True)
+    
     cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "xMins", "form_display", "fixture_ease", "pred_points"]
     if "xMins" not in top_players.columns: cols_to_show.remove("xMins")
+    if "Role" in top_players.columns: cols_to_show.append("Role")
     
     st.data_editor(
         top_players[cols_to_show],
@@ -587,6 +602,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
             ),
             "pos": st.column_config.TextColumn(
                 "ตำแหน่ง", width="small"
+            ),
+            "Role": st.column_config.TextColumn(
+                "Role", help="Set Piece Roles", width="medium"
             ),
             "price": st.column_config.NumberColumn(
                 "ราคา (£)", format="£%.1f"
@@ -604,7 +622,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                 "คะแนนคาดการณ์", format="%.1f"
             ),
         },
-        column_order=("ลำดับ", "photo_url", "web_name", "team_short", "pos", "price", "xMins", "form_display", "fixture_ease", "pred_points"),
+        column_order=tuple(["ลำดับ"] + cols_to_show),
         use_container_width=True,
         height=750,
         disabled=True
