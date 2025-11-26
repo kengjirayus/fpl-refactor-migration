@@ -71,6 +71,10 @@ def get_entry_picks(entry_id: int, event: int) -> Dict:
 def get_player_history(player_id: int) -> Dict:
     return _fetch(f"{FPL_BASE}/element-summary/{player_id}/") or {}
 
+@st.cache_data(ttl=300)
+def get_entry_history(entry_id: int) -> Dict:
+    return _fetch(f"{FPL_BASE}/entry/{entry_id}/history/") or {}
+
 @st.cache_data(ttl=3600)
 def get_understat_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Fetches player and team data from Understat.com."""

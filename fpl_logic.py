@@ -1085,3 +1085,149 @@ def analyze_player_history(player_id: int) -> Dict[str, any]:
         
     except Exception:
         return {'weighted_form': 0.0, 'form_trend': "➖", 'avg_minutes': 0.0, 'points_variance': 0.0}
+
+def suggest_chip_usage(current_gw: int, chips_history: List[Dict], fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, squad_df: pd.DataFrame) -> List[Dict]:
+    """
+    Analyzes upcoming fixtures (DGW/BGW) and squad status to recommend chip usage.
+    """
+    recommendations = []
+    
+    # 1. Identify Used Chips
+    used_chips = set()
+    for chip in chips_history:
+        used_chips.add(chip['name']) # '3xc', 'bboost', 'freehit', 'wildcard'
+        
+    # Map API names to readable names
+    chip_map = {
+        '3xc': 'Triple Captain',
+        'bboost': 'Bench Boost',
+        'freehit': 'Free Hit',
+        'wildcard': 'Wildcard'
+    }
+    
+    # 2. Analyze Upcoming Fixtures (Next 5 GWs)
+    lookahead = 5
+    future_gws = list(range(current_gw, current_gw + lookahead))
+    
+    dgw_gws = [] # Gameweeks with Double Games
+    bgw_gws = [] # Gameweeks with Blanks
+    
+    for gw in future_gws:
+        gw_fixtures = fixtures_df[fixtures_df['event'] == gw]
+        team_counts = gw_fixtures['team_h'].value_counts().add(gw_fixtures['team_a'].value_counts(), fill_value=0)
+        
+        # DGW: Any team plays > 1 game
+        if (team_counts > 1).any():
+            dgw_teams = team_counts[team_counts > 1].index.tolist()
+            dgw_gws.append({'gw': gw, 'teams': dgw_teams})
+            
+        # BGW: Count of teams playing < 1 game (Total teams = 20)
+        teams_playing = len(team_counts)
+        if teams_playing < 20:
+            bgw_gws.append({'gw': gw, 'teams_playing': teams_playing})
+
+    # 3. Generate Recommendations
+    
+    # --- Triple Captain (3xc) ---
+    if '3xc' not in used_chips:
+        found_tc_opp = False
+        for dgw in dgw_gws:
+            gw = dgw['gw']
+            teams = dgw['teams']
+            # Check if we own premium players from these teams
+            premium_assets = squad_df[
+                (squad_df['team'].isin(teams)) & 
+                ((squad_df['now_cost'] > 100) | (squad_df['selected_by_percent'] > 30))
+            ]
+            
+            if not premium_assets.empty:
+                names = ", ".join(premium_assets['web_name'].tolist())
+                recommendations.append({
+                    'chip': 'Triple Captain',
+                    'gw': gw,
+                    'status': 'Recommended',
+                    'reason': f"GW{gw} เป็น Double Gameweek และคุณมีตัวท็อปอย่าง {names} โปรแกรมน่าส่งเสริม เหมาะมากสำหรับกด TC"
+                })
+                found_tc_opp = True
+                break # Recommend first good opportunity
+        
+        if not found_tc_opp:
+             recommendations.append({
+                'chip': 'Triple Captain',
+                'gw': '-',
+                'status': 'Hold',
+                'reason': "แนะนำให้รอ Double Gameweek ที่มีตัวหลักของคุณแข่ง 2 นัดในสัปดาห์เดียวก่อน"
+            })
+    else:
+        recommendations.append({'chip': 'Triple Captain', 'gw': '-', 'status': 'Used', 'reason': "คุณใช้ Triple Captain ไปแล้วในซีซั่นนี้"})
+
+    # --- Bench Boost (bboost) ---
+    if 'bboost' not in used_chips:
+        found_bb_opp = False
+        for dgw in dgw_gws:
+            gw = dgw['gw']
+            recommendations.append({
+                'chip': 'Bench Boost',
+                'gw': gw,
+                'status': 'Consider',
+                'reason': f"GW{gw} มี Double Gameweek หากตัวสำรองของคุณมีโปรแกรมลงครบ นี่คือจังหวะทองของ Bench Boost"
+            })
+            found_bb_opp = True
+            break
+            
+        if not found_bb_opp:
+             recommendations.append({
+                'chip': 'Bench Boost',
+                'gw': '-',
+                'status': 'Hold',
+                'reason': "ควรรอช่วงที่คุณสามารถส่งผู้เล่นลงครบทั้ง 15 คนได้พร้อมกัน"
+            })
+    else:
+        recommendations.append({'chip': 'Bench Boost', 'gw': '-', 'status': 'Used', 'reason': "คุณใช้ Bench Boost ไปแล้วเรียบร้อย"})
+
+    # --- Free Hit (freehit) ---
+    if 'freehit' not in used_chips:
+        found_fh_opp = False
+        for bgw in bgw_gws:
+            gw = bgw['gw']
+            if bgw['teams_playing'] <= 14: # Less than 7 matches
+                recommendations.append({
+                    'chip': 'Free Hit',
+                    'gw': gw,
+                    'status': 'Recommended',
+                    'reason': f"GW{gw} เป็น Blank Gameweek มีแข่งเพียง {bgw['teams_playing']} ทีม แนะนำให้ใช้ Free Hit เพื่อจัดทีมให้ครบ 11 คน"
+                })
+                found_fh_opp = True
+                break
+        
+        if not found_fh_opp:
+             recommendations.append({
+                'chip': 'Free Hit',
+                'gw': '-',
+                'status': 'Hold',
+                'reason': "เก็บไว้ใช้ในสัปดาห์ที่ทีมคุณตัวขาดเยอะ หรือมี Blank / Double หนัก ๆ"
+            })
+    else:
+        recommendations.append({'chip': 'Free Hit', 'gw': '-', 'status': 'Used', 'reason': "คุณใช้ Free Hit ไปแล้วในซีซั่นนี้"})
+
+    # --- Wildcard (wildcard) ---
+    if 'wildcard' not in used_chips: 
+        if dgw_gws:
+            first_dgw = dgw_gws[0]['gw']
+            recommendations.append({
+                'chip': 'Wildcard',
+                'gw': first_dgw - 1,
+                'status': 'Consider',
+                'reason': f"ควรพิจารณากดก่อน GW{first_dgw} เพื่อเตรียมทีมรับ Double Gameweek ที่กำลังจะมา"
+            })
+        else:
+             recommendations.append({
+                'chip': 'Wildcard',
+                'gw': '-',
+                'status': 'Hold',
+                'reason': "เก็บไว้ใช้ช่วงที่ตารางแข่งทีมหลักเปลี่ยนหนัก หรือจำเป็นต้องยกเครื่องทีม"
+            })
+    else:
+        recommendations.append({'chip': 'Wildcard', 'gw': '-', 'status': 'Used', 'reason': "คุณใช้ Wildcard ไปแล้วแล้ว" })
+
+    return recommendations

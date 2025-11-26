@@ -11,14 +11,15 @@ st.set_page_config(page_title="FPL Weekly Assistant", page_icon="⚽️", layout
 # 2. Import modules
 from data_helpers import (
     get_bootstrap, get_fixtures, get_entry, get_entry_picks,
-    get_understat_data, merge_understat_data
+    get_understat_data, merge_understat_data, get_entry_history
 )
 from fpl_logic import (
     build_master_tables, current_and_next_event, next_fixture_features,
     engineer_features_enhanced, get_fixture_difficulty_matrix, find_rotation_pairs,
     optimize_wildcard_team, optimize_starting_xi, select_captain_vice,
     smart_bench_order, analyze_lineup_insights, calculate_transfer_roi,
-    suggest_transfers, POSITIONS, detect_fixture_swing, plan_rolling_transfers
+    suggest_transfers, POSITIONS, detect_fixture_swing, plan_rolling_transfers,
+    suggest_chip_usage
 )
 from ui_components import (
     display_user_friendly_table, display_pitch_view, add_global_css,
@@ -523,6 +524,42 @@ def main():
                                 st.warning("⚠️ แผนนี้ยังไม่คุ้ม อาจพิจารณาเก็บ Free Transfer ไว้ก่อน")
                         else:
                             st.warning("ไม่สามารถสร้างแผนการเปลี่ยนตัวได้")
+                
+                # Chip Strategy Advisor
+                st.markdown("---")
+                st.subheader("🎯 แนะนำจังหวะการใช้ชิป (Chip Strategy Advisor)")
+                st.markdown("💡 วิเคราะห์โปรแกรมแข่งล่วงหน้า เพื่อบอกช่วงเวลาที่เหมาะที่สุดในการกดชิป")
+                
+                with st.spinner("กำลังวิเคราะห์แผนการใช้ชิป..."):
+                    # Fetch chip history
+                    entry_hist = get_entry_history(entry_id)
+                    chips_history = entry_hist.get('chips', []) if entry_hist else []
+                    
+                    chip_recs = suggest_chip_usage(target_event, chips_history, fixtures_df, teams, feat)
+                    
+                    if chip_recs:
+                        # Display in rows of 2
+                        for i in range(0, len(chip_recs), 2):
+                            cols = st.columns(2)
+                            for j in range(2):
+                                if i + j < len(chip_recs):
+                                    rec = chip_recs[i+j]
+                                    with cols[j]:
+                                        status_icon = "✅" if rec['status'] == 'Recommended' else "🤔" if rec['status'] == 'Consider' else "🔒" if rec['status'] == 'Used' else "⏳"
+                                        st.markdown(f"#### {status_icon} {rec['chip']}")
+                                        
+                                        if rec['status'] == 'Recommended':
+                                            st.success(f"**แนะนำให้ใช้!** (Target: GW{rec['gw']})")
+                                        elif rec['status'] == 'Consider':
+                                            st.warning(f"**น่าสนใจ** (Target: GW{rec['gw']})")
+                                        elif rec['status'] == 'Used':
+                                            st.markdown(f"Status: **Used**")
+                                        else:
+                                            st.info(f"Status: **Hold**")
+                                            
+                                        st.caption(rec['reason'])
+                    else:
+                        st.info("ยังไม่มีคำแนะนำพิเศษสำหรับการใช้ชิปในช่วงนี้")
                 
                 # ROI Calculator
                 st.markdown("---")
