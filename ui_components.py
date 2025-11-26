@@ -744,6 +744,9 @@ def display_player_comparison(player1_data, player2_data):
     }
     categories = list(category_map.keys())
     
+    p1_name = player1_data.get('web_name', 'Player 1')
+    p2_name = player2_data.get('web_name', 'Player 2')
+    
     # Helper to safely get float value
     def get_val(row, col):
         try:
@@ -769,82 +772,145 @@ def display_player_comparison(player1_data, player2_data):
     p1_ranges = [get_range(player1_data, c) for c in categories]
     p2_ranges = [get_range(player2_data, c) for c in categories]
     
-    chart_data = pd.DataFrame({
-        'Player': [p1_name]*len(categories) + [p2_name]*len(categories),
-        'Category': categories * 2,
-        'Value': p1_vals + p2_vals,
-        'Min': [r[0] for r in p1_ranges] + [r[0] for r in p2_ranges],
-        'Max': [r[1] for r in p1_ranges] + [r[1] for r in p2_ranges]
-    })
+    # --- Layout: Row 1 (Radar + Summary) ---
+    c1, c2 = st.columns([2, 1])
     
-    base = alt.Chart(chart_data).encode(
-        x=alt.X('Player:N', axis=None),
-        color=alt.Color('Player:N'),
-        column=alt.Column('Category:N', header=alt.Header(title=None, labelOrient="bottom"))
-    )
-    
-    bars = base.mark_bar().encode(y=alt.Y('Value:Q', title=None))
-    error_bars = base.mark_rule(strokeWidth=2).encode(y='Min:Q', y2='Max:Q')
-    
-    chart = (bars + error_bars).properties(width=100, height=200)
-    
-    st.altair_chart(chart)
-    
-    # --- NEW: Home/Away Split Chart ---
-    st.markdown("#### 🏠 vs 🚌 Home/Away Performance")
-    
-    # Fetch split data
-    # Robustly extract ID from Series name (index) or 'id' column
-    try:
-        p1_id = int(player1_data.name)
-    except (ValueError, TypeError):
-        p1_id = int(player1_data.get('id', 0))
+    with c1:
+        st.markdown("#### 🕸️ Overall Comparison")
+        # --- 1. Radar Chart ---
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatterpolar(
+          r=[get_val(player1_data, category_map[c]) for c in categories],
+          theta=categories,
+          fill='toself',
+          name=p1_name,
+          line_color='#1f77b4', # Blue
+          fillcolor='rgba(31, 119, 180, 0.3)'
+        ))
+        
+        fig.add_trace(go.Scatterpolar(
+          r=[get_val(player2_data, category_map[c]) for c in categories],
+          theta=categories,
+          fill='toself',
+          name=p2_name,
+          line_color='#ff7f0e', # Orange
+          fillcolor='rgba(255, 127, 14, 0.3)'
+        ))
 
-    try:
-        p2_id = int(player2_data.name)
-    except (ValueError, TypeError):
-        p2_id = int(player2_data.get('id', 0))
-    
-    if p1_id <= 0 or p2_id <= 0:
-        st.warning("Could not identify Player IDs for split analysis.")
-        return
+        fig.update_layout(
+          polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
+          showlegend=True,
+          margin=dict(l=40, r=40, t=20, b=20),
+          height=350,
+          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
 
-    with st.spinner("Fetching historical data for split analysis..."):
-        p1_split = calculate_home_away_split(p1_id)
-        p2_split = calculate_home_away_split(p2_id)
+    with c2:
+        st.markdown("#### 📝 Key Stats")
+        # Create a mini comparison table
+        key_stats = {
+            "Metric": ["Price", "Total Pts", "Selected %", "Risk Level"],
+            p1_name: [
+                f"£{float(player1_data.get('now_cost', 0))/10:.1f}m",
+                player1_data.get('total_points', 0),
+                f"{player1_data.get('selected_by_percent', 0)}%",
+                player1_data.get('risk_level', '-')
+            ],
+            p2_name: [
+                f"£{float(player2_data.get('now_cost', 0))/10:.1f}m",
+                player2_data.get('total_points', 0),
+                f"{player2_data.get('selected_by_percent', 0)}%",
+                player2_data.get('risk_level', '-')
+            ]
+        }
+        st.dataframe(pd.DataFrame(key_stats), hide_index=True, use_container_width=True)
+
+    # --- Layout: Row 2 (Risk + Venue) ---
+    c3, c4 = st.columns(2)
     
-    # Prepare data for chart
-    split_data = [
-        {"Player": player1_data.get('web_name', 'P1'), "Venue": "Home", "Avg Points": p1_split['home_avg']},
-        {"Player": player1_data.get('web_name', 'P1'), "Venue": "Away", "Avg Points": p1_split['away_avg']},
-        {"Player": player2_data.get('web_name', 'P2'), "Venue": "Home", "Avg Points": p2_split['home_avg']},
-        {"Player": player2_data.get('web_name', 'P2'), "Venue": "Away", "Avg Points": p2_split['away_avg']},
-    ]
-    split_df = pd.DataFrame(split_data)
-    
-    # Altair Chart
-    split_chart = alt.Chart(split_df).mark_bar().encode(
-        x=alt.X('Venue:N', axis=alt.Axis(title=None)),
-        y=alt.Y('Avg Points:Q', title='Average Points'),
-        color=alt.Color('Player:N', legend=alt.Legend(title="Player")),
-        column=alt.Column('Player:N', header=alt.Header(title=None, labels=False)),
-        tooltip=['Player', 'Venue', 'Avg Points']
-    ).properties(width=150, height=300)
-    
-    st.altair_chart(split_chart, use_container_width=False)
-    
-    # Display stats table
-    st.caption("Detailed Split Stats:")
-    stats_data = {
-        "Stat": ["Home Avg Pts", "Away Avg Pts", "Home Games", "Away Games"],
-        f"{player1_data.get('web_name')}": [
-            f"{p1_split['home_avg']:.2f}", f"{p1_split['away_avg']:.2f}", p1_split['home_games'], p1_split['away_games']
-        ],
-        f"{player2_data.get('web_name')}": [
-            f"{p2_split['home_avg']:.2f}", f"{p2_split['away_avg']:.2f}", p2_split['home_games'], p2_split['away_games']
-        ]
-    }
-    st.dataframe(pd.DataFrame(stats_data), hide_index=True, use_container_width=True)
+    with c3:
+        # --- 2. Bar Chart with Error Bars (Risk Analysis) ---
+        st.markdown("#### 📊 Projection & Risk")
+        
+        chart_data = pd.DataFrame({
+            'Player': [p1_name]*len(categories) + [p2_name]*len(categories),
+            'Category': categories * 2,
+            'Value': p1_vals + p2_vals,
+            'Min': [r[0] for r in p1_ranges] + [r[0] for r in p2_ranges],
+            'Max': [r[1] for r in p1_ranges] + [r[1] for r in p2_ranges]
+        })
+        
+        base = alt.Chart(chart_data).encode(
+            x=alt.X('Player:N', axis=None),
+            color=alt.Color('Player:N')
+        )
+        
+        bars = base.mark_bar().encode(y=alt.Y('Value:Q', title=None))
+        error_bars = base.mark_rule(strokeWidth=2).encode(y='Min:Q', y2='Max:Q')
+        
+        chart = alt.layer(bars, error_bars).facet(
+            column=alt.Column('Category:N', header=alt.Header(title=None, labelOrient="bottom"))
+        ).properties(title="")
+        
+        st.altair_chart(chart, use_container_width=True)
+
+    with c4:
+        # --- NEW: Home/Away Split Chart ---
+        st.markdown("#### 🏠 vs 🚌 Venue Split")
+        
+        # Fetch split data
+        try:
+            p1_id = int(player1_data.name)
+        except (ValueError, TypeError):
+            p1_id = int(player1_data.get('id', 0))
+
+        try:
+            p2_id = int(player2_data.name)
+        except (ValueError, TypeError):
+            p2_id = int(player2_data.get('id', 0))
+        
+        if p1_id > 0 and p2_id > 0:
+            with st.spinner("Fetching split data..."):
+                p1_split = calculate_home_away_split(p1_id)
+                p2_split = calculate_home_away_split(p2_id)
+            
+            # Prepare data for chart
+            split_data = [
+                {"Player": player1_data.get('web_name', 'P1'), "Venue": "Home", "Avg Points": p1_split['home_avg']},
+                {"Player": player1_data.get('web_name', 'P1'), "Venue": "Away", "Avg Points": p1_split['away_avg']},
+                {"Player": player2_data.get('web_name', 'P2'), "Venue": "Home", "Avg Points": p2_split['home_avg']},
+                {"Player": player2_data.get('web_name', 'P2'), "Venue": "Away", "Avg Points": p2_split['away_avg']},
+            ]
+            split_df = pd.DataFrame(split_data)
+            
+            # Altair Chart
+            split_chart = alt.Chart(split_df).mark_bar().encode(
+                x=alt.X('Venue:N', axis=alt.Axis(title=None)),
+                y=alt.Y('Avg Points:Q', title='Avg Pts'),
+                color=alt.Color('Player:N', legend=None),
+                column=alt.Column('Player:N', header=alt.Header(title=None, labels=True)),
+                tooltip=['Player', 'Venue', 'Avg Points']
+            ).properties(width=120, height=250)
+            
+            st.altair_chart(split_chart, use_container_width=False)
+            
+            # Display stats table in expander
+            with st.expander("See Detailed Split Stats"):
+                stats_data = {
+                    "Stat": ["Home Avg Pts", "Away Avg Pts", "Home Games", "Away Games"],
+                    f"{player1_data.get('web_name')}": [
+                        f"{p1_split['home_avg']:.2f}", f"{p1_split['away_avg']:.2f}", p1_split['home_games'], p1_split['away_games']
+                    ],
+                    f"{player2_data.get('web_name')}": [
+                        f"{p2_split['home_avg']:.2f}", f"{p2_split['away_avg']:.2f}", p2_split['home_games'], p2_split['away_games']
+                    ]
+                }
+                st.dataframe(pd.DataFrame(stats_data), hide_index=True, use_container_width=True)
+        else:
+            st.warning("Could not identify Player IDs.")
 
 def display_injury_watch(feat_df: pd.DataFrame):
     st.subheader("🏥 Injury & Suspension Watch (เช็คตัวเจ็บ/แบน)")

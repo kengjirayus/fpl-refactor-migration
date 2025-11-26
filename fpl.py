@@ -499,7 +499,11 @@ def main():
                         # --- NEW: High Risk Warning ---
                         # Map risk_level from feat to moves_df
                         if 'risk_level' in feat.columns:
-                            risk_map = feat.set_index('id')['risk_level'].to_dict()
+                            if 'id' in feat.columns:
+                                risk_map = feat.set_index('id')['risk_level'].to_dict()
+                            else:
+                                risk_map = feat['risk_level'].to_dict()
+                                
                             moves_df['in_risk'] = moves_df['in_id'].map(risk_map)
                             
                             # Add warning to 'in_name'
