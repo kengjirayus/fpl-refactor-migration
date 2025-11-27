@@ -4,7 +4,9 @@ import streamlit as st
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
 from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from data_helpers import get_player_history
+import threading
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+from data_helpers import get_player_history, get_midweek_data
 
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
@@ -230,8 +232,20 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
         relevant_players.update(my_team_ids)
     relevant_players = list(relevant_players)
 
+    # Capture the current Streamlit context to pass to threads
+    try:
+        ctx = get_script_run_ctx()
+    except Exception:
+        ctx = None
+
+    def analyze_wrapper(pid):
+        # Attach the context to the worker thread
+        if ctx:
+            add_script_run_ctx(threading.current_thread(), ctx)
+        return analyze_player_history(pid)
+
     with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_id = {executor.submit(analyze_player_history, pid): pid for pid in relevant_players}
+        future_to_id = {executor.submit(analyze_wrapper, pid): pid for pid in relevant_players}
         for future in as_completed(future_to_id):
             pid = future_to_id[future]
             try:
@@ -336,6 +350,59 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     # --- UPGRADE: xMins Approximation ---
     # xMins = min(90, avg_minutes * play_prob)
     elements['xMins'] = elements.apply(lambda x: min(90, x['avg_minutes'] * x['play_prob']), axis=1)
+
+    # --- NEW: Midweek Rotation Analysis ---
+    # Fetch midweek data for all relevant teams
+    midweek_cache = {}
+    unique_teams = elements['team'].unique()
+    
+    # for t_id in unique_teams:
+    #     midweek_cache[t_id] = get_midweek_data(t_id)
+        
+    def apply_midweek_rotation(row):
+        current_xmins = row['xMins']
+        team_id = row['team']
+        mw_data = midweek_cache.get(team_id, {})
+        
+        if not mw_data:
+            return current_xmins
+            
+        hours_gap = mw_data.get('hours_gap', 999)
+        
+        # Only apply if gap is short (< 72 hours)
+        if hours_gap < 72:
+            player_minutes = mw_data.get('player_minutes', {})
+            
+            # Normalize names for matching
+            import unidecode
+            def norm(n): return unidecode.unidecode(str(n)).lower().strip()
+            
+            web_name = norm(row['web_name'])
+            full_name = norm(row['first_name'] + " " + row['second_name'])
+            
+            # Try to find match
+            mins_played = 0
+            found = False
+            
+            for k, v in player_minutes.items():
+                k_norm = norm(k)
+                # Check for partial matches
+                if web_name == k_norm or k_norm in full_name or full_name in k_norm:
+                    mins_played = v
+                    found = True
+                    break
+            
+            if found:
+                if mins_played > 60:
+                    # High fatigue risk -> Cap xMins at 60
+                    return min(current_xmins, 60.0)
+                elif mins_played == 0:
+                    # Rested -> Boost slightly (Fresh legs)
+                    return min(90.0, current_xmins * 1.1)
+                    
+        return current_xmins
+
+    elements['xMins'] = elements.apply(apply_midweek_rotation, axis=1)
     
     # --- NEW: Set Piece Intelligence v2 ---
     # Apply analyze_set_piece_role to each row

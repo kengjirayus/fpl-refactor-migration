@@ -920,10 +920,10 @@ def display_player_comparison(player1_data, player2_data):
                 stats_data = {
                     "Stat": ["Home Avg Pts", "Away Avg Pts", "Home Games", "Away Games"],
                     f"{player1_data.get('web_name')}": [
-                        f"{p1_split['home_avg']:.2f}", f"{p1_split['away_avg']:.2f}", p1_split['home_games'], p1_split['away_games']
+                        f"{p1_split['home_avg']:.2f}", f"{p1_split['away_avg']:.2f}", str(p1_split['home_games']), str(p1_split['away_games'])
                     ],
                     f"{player2_data.get('web_name')}": [
-                        f"{p2_split['home_avg']:.2f}", f"{p2_split['away_avg']:.2f}", p2_split['home_games'], p2_split['away_games']
+                        f"{p2_split['home_avg']:.2f}", f"{p2_split['away_avg']:.2f}", str(p2_split['home_games']), str(p2_split['away_games'])
                     ]
                 }
                 st.dataframe(pd.DataFrame(stats_data), hide_index=True, use_container_width=True)
