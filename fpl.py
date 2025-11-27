@@ -147,10 +147,11 @@ def main():
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
     
-    # Clear loading overlay
-    loading_placeholder.empty()
+    # Clear loading overlay - MOVED to after processing
+    # loading_placeholder.empty()
 
     if not bootstrap or "elements" not in bootstrap:
+        loading_placeholder.empty()
         st.error("⚠️ FPL API กำลังปิดปรับปรุงชั่วคราว")
         st.stop()
         
@@ -212,6 +213,7 @@ def main():
             teams[['id', 'name', 'logo_url']]
         )
         
+        loading_placeholder.empty()
         display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams, swing_data=swing_data)
         
         # --- NEW: Injury & Suspension Watch Section ---
@@ -244,12 +246,16 @@ def main():
         try:
             entry_id = int(st.session_state.team_id_input)
             entry = get_entry(entry_id)
-            if not entry or 'name' not in entry: st.error("ไม่สามารถดึงข้อมูลทีมได้ อยู่ในช่วงอัปเดทข้อมูลจาก FPL API. กรุณาลองอีกครั้งในภายหลัง"); st.stop()
+            if not entry or 'name' not in entry: 
+                loading_placeholder.empty()
+                st.error("ไม่สามารถดึงข้อมูลทีมได้ อยู่ในช่วงอัปเดทข้อมูลจาก FPL API. กรุณาลองอีกครั้งในภายหลัง"); st.stop()
             picks = get_entry_picks(entry_id, cur_event or 1)
             
             # Process Picks & Selling Price
             picks_data = picks.get("picks", [])
-            if not picks_data: st.error("ไม่พบข้อมูลนักเตะ"); st.stop()
+            if not picks_data: 
+                loading_placeholder.empty()
+                st.error("ไม่พบข้อมูลนักเตะ"); st.stop()
             
             selling_price_map = {}
             for p in picks_data:
@@ -262,6 +268,7 @@ def main():
             feat['selling_price'] = feat.index.map(selling_price_map)
             feat['selling_price'].fillna(feat['now_cost'], inplace=True)
 
+            loading_placeholder.empty()
             st.header(f"🚀 Analysis for '{entry['name']}'")
 
             # Wildcard Logic
