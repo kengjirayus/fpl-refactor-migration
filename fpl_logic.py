@@ -792,142 +792,159 @@ def calculate_3gw_roi(player, fixtures_df, teams_df, current_event):
         return float(player.get('pred_points', 0))
 
 def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int, all_players: pd.DataFrame, strategy: str, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int, picks_data: List[Dict] = None) -> List[Dict]:
-    valid_squad_ids = [pid for pid in current_squad_ids if pid in all_players.index]
-    if not valid_squad_ids: return []
-    current_squad_df = all_players.loc[valid_squad_ids]
-    start_ids, _ = optimize_starting_xi(current_squad_df)
-    if not start_ids: return []
+    # 1. Setup Simulation State
+    sim_squad_ids = [pid for pid in current_squad_ids if pid in all_players.index]
+    if not sim_squad_ids: return []
+    
+    sim_bank = bank
+    sim_free_transfers = free_transfers
+    
+    # Strategy Settings
+    if strategy == "Free Transfer": 
+        max_transfers = free_transfers
+        allow_hits = False
+    elif strategy == "Allow Hit (AI Suggest)": 
+        max_transfers = 5
+        allow_hits = True
+    else: 
+        max_transfers = 15
+        allow_hits = False
 
-    if strategy == "Free Transfer": max_transfers, hit_cost = free_transfers, float('inf')
-    elif strategy == "Allow Hit (AI Suggest)": max_transfers, hit_cost = 5, 4
-    else: max_transfers, hit_cost = 15, 0
-
-    # Helper to get purchase price
+    # Helper: Purchase Price Map
     purchase_price_map = {}
     if picks_data:
         for p in picks_data:
-            # Public API picks might not have purchase_price. Handle gracefully.
             if 'purchase_price' in p:
                 purchase_price_map[p['element']] = p['purchase_price']
 
-    current_team_count = {}
-    for pid in valid_squad_ids:
-        tid = int(all_players.loc[pid, 'team'])
-        current_team_count[tid] = current_team_count.get(tid, 0) + 1
-
-    position_groups = {1: [], 2: [], 3: [], 4: []}
-    for pid in valid_squad_ids:
-        position_groups.setdefault(int(all_players.loc[pid, 'element_type']), []).append(pid)
-
-    remaining_bank, used_in_players, all_potential_moves = bank, set(), []
+    final_moves = []
     
-    # Iterate through ALL positions and ALL players to find the best moves
-    for pos in [1, 2, 3, 4]:
-        out_ids = position_groups.get(pos, [])
-        if not out_ids: continue
-        
-        # --- IMPROVED: Prioritize selling unavailable players ---
-        def get_sell_priority(pid):
-            p = all_players.loc[pid]
-            prob = p.get('play_prob', 1.0)
-            # Sort by: Play Prob (asc), Pred Points (asc)
-            # Lower prob = sell first. Lower points = sell first.
-            return (prob, p['pred_points'])
-
-        for out_id in sorted(out_ids, key=get_sell_priority):
-            out_player = all_players.loc[out_id]
+    # 2. Iterative Greedy Search
+    for _ in range(max_transfers):
+        # Current State Calculations
+        current_team_counts = {}
+        for pid in sim_squad_ids:
+            tid = int(all_players.loc[pid, 'team'])
+            current_team_counts[tid] = current_team_counts.get(tid, 0) + 1
             
-            # --- Price Lock Analysis ---
-            price_loss = 0.0
-            purchase_price = purchase_price_map.get(out_id)
-            if purchase_price:
-                # Fallback estimate if selling_price not directly available in picks_data map
-                pick_obj = next((p for p in picks_data if p['element'] == out_id), None)
-                if pick_obj and 'selling_price' in pick_obj:
-                    selling_price = pick_obj['selling_price']
+        best_move = None
+        best_net_gain = float('-inf')
+        
+        # Determine Hit Cost for this step
+        if sim_free_transfers > 0:
+            step_hit_cost = 0
+        else:
+            if not allow_hits: break # No more FTs and hits not allowed
+            step_hit_cost = 4
+            
+        # Group current squad by position
+        position_groups = {1: [], 2: [], 3: [], 4: []}
+        for pid in sim_squad_ids:
+            position_groups.setdefault(int(all_players.loc[pid, 'element_type']), []).append(pid)
+            
+        # Search all possible single moves
+        for pos in [1, 2, 3, 4]:
+            out_ids = position_groups.get(pos, [])
+            if not out_ids: continue
+            
+            for out_id in out_ids:
+                out_player = all_players.loc[out_id]
+                
+                # Calculate Sell Price & Bank
+                price_loss = 0.0
+                purchase_price = purchase_price_map.get(out_id)
+                if purchase_price and picks_data:
+                    pick_obj = next((p for p in picks_data if p['element'] == out_id), None)
+                    if pick_obj and 'selling_price' in pick_obj:
+                        selling_price = pick_obj['selling_price']
+                    else:
+                        selling_price = out_player['now_cost']
+                        
+                    if purchase_price > selling_price:
+                        price_loss = (purchase_price - selling_price) / 10.0
                 else:
                     selling_price = out_player['now_cost']
-
-                if purchase_price > selling_price:
-                    price_loss = (purchase_price - selling_price) / 10.0
-
-            sell_price = out_player['now_cost'] / 10.0 # Use current cost for bank calculation approximation
-            
-            # Calculate budget for this specific move (independent of other moves)
-            available_budget = bank + sell_price
-            
-            # Find best replacement
-            candidates = all_players[
-                (all_players['element_type'] == pos) &
-                (all_players.index != out_id) &
-                (~all_players.index.isin(valid_squad_ids)) & # Exclude players already in squad
-                ((all_players['now_cost'] / 10.0) <= available_budget) &
-                (all_players['chance_of_playing_next_round'] > 75)
-            ].copy()
-            
-            if candidates.empty: continue
-            
-            # Filter max 3 players per team
-            def can_add(pid):
-                tid = int(all_players.loc[pid, 'team'])
-                return current_team_count.get(tid, 0) < 3
-            
-            candidates = candidates[candidates.index.map(can_add)]
-            if candidates.empty: continue
-
-            # Get top 3 candidates to consider, not just the absolute best points
-            # This helps if the best points player has a bad ROI due to fixtures
-            top_candidates = candidates.nlargest(3, 'pred_points')
-            
-            for _, best_in in top_candidates.iterrows():
-                in_id = int(best_in.name)
                 
-                # ROI Calculation
-                roi = calculate_transfer_roi(out_id, in_id, current_event, all_players, fixtures_df, teams_df)
-                net_gain = roi['net_gain']
+                sell_price_val = selling_price / 10.0
+                available_budget = sim_bank + sell_price_val
                 
-                # Apply Price Lock Penalty
-                warning_msg = ""
-                if price_loss > 0.3:
-                    net_gain -= 0.5 # Penalty for breaking price lock
-                    warning_msg = "⚠️ Selling at loss"
+                # Find Candidates (IN)
+                candidates = all_players[
+                    (all_players['element_type'] == pos) &
+                    (~all_players.index.isin(sim_squad_ids)) &
+                    ((all_players['now_cost'] / 10.0) <= available_budget) &
+                    (all_players['chance_of_playing_next_round'] > 75)
+                ]
                 
-                if net_gain > (hit_cost if free_transfers == 0 else 0):
-                    all_potential_moves.append({
-                        "out_id": out_id,
-                        "in_id": in_id,
-                        "out_name": out_player['web_name'],
-                        "out_cost": sell_price,
-                        "in_name": best_in['web_name'],
-                        "in_cost": best_in['now_cost'] / 10.0,
-                        "delta_points": best_in['pred_points'] - out_player['pred_points'],
-                        "roi_3gw": roi['gross_gain'],
-                        "hit_cost": hit_cost if free_transfers == 0 else 0,
-                        "net_gain": net_gain,
-                        "price_loss": price_loss,
-                        "warning": warning_msg
-                    })
+                if candidates.empty: continue
+                
+                # Filter Team Limits (taking into account the player leaving)
+                out_team = int(out_player['team'])
+                
+                def can_add_dynamic(pid):
+                    in_team = int(all_players.loc[pid, 'team'])
+                    current_count = current_team_counts.get(in_team, 0)
+                    if in_team == out_team:
+                        current_count -= 1
+                    return current_count < 3
+                
+                candidates = candidates[candidates.index.map(can_add_dynamic)]
+                if candidates.empty: continue
+                
+                # Optimization: Look at top 5 by predicted points
+                top_candidates = candidates.nlargest(5, 'pred_points')
+                
+                for _, best_in in top_candidates.iterrows():
+                    in_id = int(best_in.name)
+                    
+                    # ROI Calculation
+                    roi = calculate_transfer_roi(out_id, in_id, current_event, all_players, fixtures_df, teams_df, hit_cost=0)
+                    gross_gain = roi['gross_gain']
+                    
+                    # Apply Price Lock Penalty
+                    warning_msg = ""
+                    adjusted_gross_gain = gross_gain
+                    if price_loss > 0.3:
+                        adjusted_gross_gain -= 0.5
+                        warning_msg = "⚠️ Selling at loss"
+                        
+                    net_gain = adjusted_gross_gain - step_hit_cost
+                    
+                    if net_gain > best_net_gain:
+                        best_net_gain = net_gain
+                        best_move = {
+                            "out_id": out_id,
+                            "in_id": in_id,
+                            "out_name": out_player['web_name'],
+                            "out_cost": sell_price_val,
+                            "in_name": best_in['web_name'],
+                            "in_cost": best_in['now_cost'] / 10.0,
+                            "delta_points": best_in['pred_points'] - out_player['pred_points'],
+                            "roi_3gw": gross_gain,
+                            "hit_cost": step_hit_cost,
+                            "net_gain": net_gain,
+                            "price_loss": price_loss,
+                            "warning": warning_msg
+                        }
 
-    # Sort all collected moves by Net Gain (Descending)
-    all_potential_moves.sort(key=lambda x: x['net_gain'], reverse=True)
-    
-    # Select top N unique moves
-    final_moves = []
-    seen_out = set()
-    seen_in = set()
-    
-    for move in all_potential_moves:
-        if len(final_moves) >= max_transfers: break
-        
-        # Ensure we don't suggest selling the same player twice or buying the same player twice
-        # (unless we support multiple transfers, but for now let's keep it simple: 1 suggestion per player involved)
-        if move['out_name'] in seen_out or move['in_name'] in seen_in:
-            continue
+        # 3. Apply Best Move or Stop
+        if best_move and best_move['net_gain'] > 0:
+            final_moves.append(best_move)
             
-        final_moves.append(move)
-        seen_out.add(move['out_name'])
-        seen_in.add(move['in_name'])
+            # Update Simulation State
+            sim_squad_ids.remove(best_move['out_id'])
+            sim_squad_ids.append(best_move['in_id'])
+            sim_bank += (best_move['out_cost'] - best_move['in_cost'])
             
+            if sim_free_transfers > 0:
+                sim_free_transfers -= 1
+                
+            purchase_price_map[best_move['in_id']] = all_players.loc[best_move['in_id'], 'now_cost']
+            
+        else:
+            break
+            
+    return final_moves
     return final_moves
 
 def plan_rolling_transfers(current_squad_ids: List[int], bank: float, free_transfers: int, all_players: pd.DataFrame, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int, horizon: int = 3) -> List[Dict]:
