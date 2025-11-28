@@ -266,7 +266,7 @@ def main():
                     selling_price_map[pid] = p['purchase_price'] + ((now_cost - p['purchase_price']) // 2)
                 else: selling_price_map[pid] = feat.loc[pid, 'now_cost'] if pid in feat.index else 0
             feat['selling_price'] = feat.index.map(selling_price_map)
-            feat['selling_price'].fillna(feat['now_cost'], inplace=True)
+            feat['selling_price'] = feat['selling_price'].fillna(feat['now_cost'])
 
             loading_placeholder.empty()
             st.header(f"🚀 Analysis for '{entry['name']}'")
@@ -362,7 +362,7 @@ def main():
                      
                      # Update selling price map again as feat is refreshed
                      feat['selling_price'] = feat.index.map(selling_price_map)
-                     feat['selling_price'].fillna(feat['now_cost'], inplace=True)
+                     feat['selling_price'] = feat['selling_price'].fillna(feat['now_cost'])
 
                 squad_df = feat.loc[valid_ids].copy()
 
@@ -682,6 +682,9 @@ def main():
                     current_sim_ids = valid_ids
                     st.session_state.simulated_squad_ids = valid_ids
 
+                # --- OPTIMIZATION: Create reverse map for O(1) lookup ---
+                name_to_idx_map = {name: i for i, name in enumerate(all_player_name_options)}
+
                 for i, pid in enumerate(current_sim_ids):
                     if pid not in feat.index: pid = valid_ids[i]
                     player = feat.loc[pid]
@@ -692,12 +695,18 @@ def main():
                             all_player_name_options.append(p_name)
                             player_search_map[p_name] = pid
                             player_id_to_name_map[pid] = p_name
+                            # Update reverse map
+                            name_to_idx_map[p_name] = len(all_player_name_options) - 1
                     
                     with st.container():
                         c1, c2, c3 = st.columns([3, 1, 4])
                         c1.text(f"{i+1}. {player['web_name']} ({POSITIONS[player['element_type']]})")
                         c2.text("➡️")
-                        sel = c3.selectbox(f"Select player {i+1}", all_player_name_options, index=all_player_name_options.index(p_name) if p_name in all_player_name_options else 0, key=f"sim_{i}", label_visibility="collapsed")
+                        
+                        # Use optimized lookup
+                        default_idx = name_to_idx_map.get(p_name, 0)
+                        
+                        sel = c3.selectbox(f"Select player {i+1}", all_player_name_options, index=default_idx, key=f"sim_{i}", label_visibility="collapsed")
                         new_sim_ids.append(player_search_map[sel])
                 
                 if new_sim_ids != current_sim_ids:

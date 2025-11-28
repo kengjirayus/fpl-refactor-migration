@@ -201,6 +201,11 @@ def display_user_friendly_table(df, title="", language="thai_english", add_color
             
     formatted_df = format_dataframe(display_df, language)
     formatted_df = format_numbers_in_dataframe(formatted_df)
+    # Ensure object columns are strings to prevent Arrow serialization errors
+    for col in formatted_df.columns:
+        if formatted_df[col].dtype == 'object':
+            formatted_df[col] = formatted_df[col].astype(str)
+
     if add_colors:
         styled_df = add_color_coding(formatted_df)
         st.dataframe(styled_df, use_container_width=True, height=height)
@@ -602,6 +607,11 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     if "projection_range" in top_players.columns: cols_to_show.append("projection_range")
     if "risk_display" in top_players.columns: cols_to_show.append("risk_display")
     
+    # Ensure object columns are strings to prevent Arrow serialization errors
+    for col in top_players.columns:
+        if top_players[col].dtype == 'object':
+            top_players[col] = top_players[col].astype(str)
+
     st.data_editor(
         top_players[cols_to_show],
         column_config={
