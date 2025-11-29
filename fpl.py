@@ -214,32 +214,34 @@ def main():
         )
         
         loading_placeholder.empty()
-        display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams, swing_data=swing_data)
         
-        # --- NEW: Injury & Suspension Watch Section ---
-        display_injury_watch(feat)
-        # Show landing page info only if not submitted
-        st.markdown("---")
-        st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
-        st.info("💡 FPL Team ID จากเว็บไซต์ https://fantasy.premierleague.com/ คลิกที่ Points แล้วจะเห็น Team ID ตามตัวอย่างรูปด้านล่าง")
-        st.markdown(
-            """
-            <style>
-            .custom-image img {
-                width: 100%;
-                max-width: 800px;
-                height: auto;
-                display: block;
-                margin: 0 auto;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            f'<div class="custom-image"><img src="https://mlkrw8gmc4ni.i.optimole.com/w:1920/h:1034/q:mauto/ig:avif/https://www.kengji.co/wp-content/uploads/2025/08/FPL-01-scaled.webp"></div>',
-            unsafe_allow_html=True
-        )
+        with st.container():
+            display_home_dashboard(feat, nf, teams, opp_matrix, diff_matrix, rotation_pairs, merged_us_players, merged_us_teams, swing_data=swing_data)
+            
+            # --- NEW: Injury & Suspension Watch Section ---
+            display_injury_watch(feat)
+            # Show landing page info only if not submitted
+            st.markdown("---")
+            st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
+            st.info("💡 FPL Team ID จากเว็บไซต์ https://fantasy.premierleague.com/ คลิกที่ Points แล้วจะเห็น Team ID ตามตัวอย่างรูปด้านล่าง")
+            st.markdown(
+                """
+                <style>
+                .custom-image img {
+                    width: 100%;
+                    max-width: 800px;
+                    height: auto;
+                    display: block;
+                    margin: 0 auto;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f'<div class="custom-image"><img src="https://mlkrw8gmc4ni.i.optimole.com/w:1920/h:1034/q:mauto/ig:avif/https://www.kengji.co/wp-content/uploads/2025/08/FPL-01-scaled.webp"></div>',
+                unsafe_allow_html=True
+            )
 
     # Analysis (If submitted)
     else:
@@ -498,54 +500,55 @@ def main():
                 with st.spinner("Analyzing potential transfers..."):
                     # Pass picks_data to enable Price Lock Analysis
                     moves = suggest_transfers(valid_ids, bank, free_transfers, feat, transfer_strategy, fixtures_df, teams, target_event, picks_data=picks_data)
-                    if moves:
-                        moves_df = pd.DataFrame(moves)
-                        moves_df.index += 1
-                        moves_df.index.name = "ลำดับ"
-                        
-                        # --- NEW: High Risk Warning ---
-                        # Map risk_level from feat to moves_df
-                        if 'risk_level' in feat.columns:
-                            if 'id' in feat.columns:
-                                risk_map = feat.set_index('id')['risk_level'].to_dict()
-                            else:
-                                risk_map = feat['risk_level'].to_dict()
-                                
-                            moves_df['in_risk'] = moves_df['in_id'].map(risk_map)
+                    with st.container():
+                        if moves:
+                            moves_df = pd.DataFrame(moves)
+                            moves_df.index += 1
+                            moves_df.index.name = "ลำดับ"
                             
-                            # Add warning to 'in_name'
-                            moves_df['in_name'] = moves_df.apply(
-                                lambda x: f"{x['in_name']} ⚠️ High Risk" if x.get('in_risk') == 'HIGH' else x['in_name'],
-                                axis=1
-                            )
-                        
-                        total_out = moves_df['out_cost'].sum()
-                        total_in = moves_df['in_cost'].sum()
-                        total_hit = moves_df['hit_cost'].sum()
-                        st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m** | เสียแต้ม: **-{total_hit}**")
-                        
-                        # Add Price Lock Warning to 'Out' column
-                        if 'price_loss' in moves_df.columns:
-                            moves_df['out_name'] = moves_df.apply(
-                                lambda x: f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m) ⚠️" if x.get('price_loss', 0) > 0.3 
-                                else (f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m)" if x.get('price_loss', 0) > 0 else x['out_name']),
-                                axis=1
-                            )
+                            # --- NEW: High Risk Warning ---
+                            # Map risk_level from feat to moves_df
+                            if 'risk_level' in feat.columns:
+                                if 'id' in feat.columns:
+                                    risk_map = feat.set_index('id')['risk_level'].to_dict()
+                                else:
+                                    risk_map = feat['risk_level'].to_dict()
+                                    
+                                moves_df['in_risk'] = moves_df['in_id'].map(risk_map)
+                                
+                                # Add warning to 'in_name'
+                                moves_df['in_name'] = moves_df.apply(
+                                    lambda x: f"{x['in_name']} ⚠️ High Risk" if x.get('in_risk') == 'HIGH' else x['in_name'],
+                                    axis=1
+                                )
+                            
+                            total_out = moves_df['out_cost'].sum()
+                            total_in = moves_df['in_cost'].sum()
+                            total_hit = moves_df['hit_cost'].sum()
+                            st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m** | เสียแต้ม: **-{total_hit}**")
+                            
+                            # Add Price Lock Warning to 'Out' column
+                            if 'price_loss' in moves_df.columns:
+                                moves_df['out_name'] = moves_df.apply(
+                                    lambda x: f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m) ⚠️" if x.get('price_loss', 0) > 0.3 
+                                    else (f"{x['out_name']} 📉(Loss £{x['price_loss']:.1f}m)" if x.get('price_loss', 0) > 0 else x['out_name']),
+                                    axis=1
+                                )
 
-                        cols_ren = {
-                            "out_name": "ขายออก (Out)", "out_cost": "ราคาขาย (£)",
-                            "in_name": "ซื้อเข้า (In)", "in_cost": "ราคาซื้อ (£)",
-                            "delta_points": "กำไร (GW นี้)", "roi_3gw": "กำไร (3 GW)",
-                            "hit_cost": "แต้มที่เสีย", "net_gain": "กำไรสุทธิ (GW นี้)"
-                        }
-                        moves_disp = moves_df.rename(columns=cols_ren)
-                        final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "กำไร (GW นี้)", "กำไร (3 GW)", "แต้มที่เสีย", "กำไรสุทธิ (GW นี้)"] if c in moves_disp.columns]
+                            cols_ren = {
+                                "out_name": "ขายออก (Out)", "out_cost": "ราคาขาย (£)",
+                                "in_name": "ซื้อเข้า (In)", "in_cost": "ราคาซื้อ (£)",
+                                "delta_points": "กำไร (GW นี้)", "roi_3gw": "กำไร (3 GW)",
+                                "hit_cost": "แต้มที่เสีย", "net_gain": "กำไรสุทธิ (GW นี้)"
+                            }
+                            moves_disp = moves_df.rename(columns=cols_ren)
+                            final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "กำไร (GW นี้)", "กำไร (3 GW)", "แต้มที่เสีย", "กำไรสุทธิ (GW นี้)"] if c in moves_disp.columns]
+                            
+                            display_user_friendly_table(moves_disp[final_cols], height=45+(len(moves_df)*35))
+                        else:
+                            st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")
                         
-                        display_user_friendly_table(moves_disp[final_cols], height=45+(len(moves_df)*35))
-                    else:
-                        st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")
-                    
-                    st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
+                        st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
                 
                 # --- Multi-Week Transfer Planner ---
                 with st.expander("🔮 แผนเปลี่ยนตัวล่วงหน้า (3 เกมวีค)", expanded=True):
@@ -597,25 +600,26 @@ def main():
                     
                     if chip_recs:
                         # Display in rows of 2
-                        for i in range(0, len(chip_recs), 2):
-                            cols = st.columns(2)
-                            for j in range(2):
-                                if i + j < len(chip_recs):
-                                    rec = chip_recs[i+j]
-                                    with cols[j]:
-                                        status_icon = "✅" if rec['status'] == 'Recommended' else "🤔" if rec['status'] == 'Consider' else "🔒" if rec['status'] == 'Used' else "⏳"
-                                        st.markdown(f"#### {status_icon} {rec['chip']}")
-                                        
-                                        if rec['status'] == 'Recommended':
-                                            st.success(f"**แนะนำให้ใช้!** (Target: GW{rec['gw']})")
-                                        elif rec['status'] == 'Consider':
-                                            st.warning(f"**น่าสนใจ** (Target: GW{rec['gw']})")
-                                        elif rec['status'] == 'Used':
-                                            st.markdown(f"Status: **Used**")
-                                        else:
-                                            st.info(f"Status: **Hold**")
+                        with st.container():
+                            for i in range(0, len(chip_recs), 2):
+                                cols = st.columns(2)
+                                for j in range(2):
+                                    if i + j < len(chip_recs):
+                                        rec = chip_recs[i+j]
+                                        with cols[j]:
+                                            status_icon = "✅" if rec['status'] == 'Recommended' else "🤔" if rec['status'] == 'Consider' else "🔒" if rec['status'] == 'Used' else "⏳"
+                                            st.markdown(f"#### {status_icon} {rec['chip']}")
                                             
-                                        st.caption(rec['reason'])
+                                            if rec['status'] == 'Recommended':
+                                                st.success(f"**แนะนำให้ใช้!** (Target: GW{rec['gw']})")
+                                            elif rec['status'] == 'Consider':
+                                                st.warning(f"**น่าสนใจ** (Target: GW{rec['gw']})")
+                                            elif rec['status'] == 'Used':
+                                                st.markdown(f"Status: **Used**")
+                                            else:
+                                                st.info(f"Status: **Hold**")
+                                                
+                                            st.caption(rec['reason'])
                     else:
                         st.info("ยังไม่มีคำแนะนำพิเศษสำหรับการใช้ชิปในช่วงนี้")
                 
@@ -672,42 +676,44 @@ def main():
 
                 st.markdown("#### แก้ไข 15 นักเตะในทีมของคุณ:")
                 new_sim_ids = []
-                cols = st.columns([3, 1, 4])
-                cols[0].markdown("**นักเตะคนปัจจุบัน (ในโหมดจำลอง)**")
-                cols[2].markdown("**เลือกนักเตะที่จะเปลี่ยน**")
                 
-                current_sim_ids = st.session_state.get('simulated_squad_ids', valid_ids)
-                if len(current_sim_ids) != 15:
-                    st.warning("ทีมจำลองของคุณไม่ครบ 15 คน, กำลังรีเซ็ต...")
-                    current_sim_ids = valid_ids
-                    st.session_state.simulated_squad_ids = valid_ids
-
-                # --- OPTIMIZATION: Create reverse map for O(1) lookup ---
-                name_to_idx_map = {name: i for i, name in enumerate(all_player_name_options)}
-
-                for i, pid in enumerate(current_sim_ids):
-                    if pid not in feat.index: pid = valid_ids[i]
-                    player = feat.loc[pid]
-                    p_name = player_id_to_name_map.get(pid)
-                    if not p_name:
-                        p_name = f"{player['web_name']} ({player['team_short']}) - £{player['now_cost']/10.0}m"
-                        if p_name not in player_search_map:
-                            all_player_name_options.append(p_name)
-                            player_search_map[p_name] = pid
-                            player_id_to_name_map[pid] = p_name
-                            # Update reverse map
-                            name_to_idx_map[p_name] = len(all_player_name_options) - 1
+                with st.container():
+                    cols = st.columns([3, 1, 4])
+                    cols[0].markdown("**นักเตะคนปัจจุบัน (ในโหมดจำลอง)**")
+                    cols[2].markdown("**เลือกนักเตะที่จะเปลี่ยน**")
                     
-                    with st.container():
-                        c1, c2, c3 = st.columns([3, 1, 4])
-                        c1.text(f"{i+1}. {player['web_name']} ({POSITIONS[player['element_type']]})")
-                        c2.text("➡️")
+                    current_sim_ids = st.session_state.get('simulated_squad_ids', valid_ids)
+                    if len(current_sim_ids) != 15:
+                        st.warning("ทีมจำลองของคุณไม่ครบ 15 คน, กำลังรีเซ็ต...")
+                        current_sim_ids = valid_ids
+                        st.session_state.simulated_squad_ids = valid_ids
+
+                    # --- OPTIMIZATION: Create reverse map for O(1) lookup ---
+                    name_to_idx_map = {name: i for i, name in enumerate(all_player_name_options)}
+
+                    for i, pid in enumerate(current_sim_ids):
+                        if pid not in feat.index: pid = valid_ids[i]
+                        player = feat.loc[pid]
+                        p_name = player_id_to_name_map.get(pid)
+                        if not p_name:
+                            p_name = f"{player['web_name']} ({player['team_short']}) - £{player['now_cost']/10.0}m"
+                            if p_name not in player_search_map:
+                                all_player_name_options.append(p_name)
+                                player_search_map[p_name] = pid
+                                player_id_to_name_map[pid] = p_name
+                                # Update reverse map
+                                name_to_idx_map[p_name] = len(all_player_name_options) - 1
                         
-                        # Use optimized lookup
-                        default_idx = name_to_idx_map.get(p_name, 0)
-                        
-                        sel = c3.selectbox(f"Select player {i+1}", all_player_name_options, index=default_idx, key=f"sim_{i}", label_visibility="collapsed")
-                        new_sim_ids.append(player_search_map[sel])
+                        with st.container():
+                            c1, c2, c3 = st.columns([3, 1, 4])
+                            c1.text(f"{i+1}. {player['web_name']} ({POSITIONS[player['element_type']]})")
+                            c2.text("➡️")
+                            
+                            # Use optimized lookup
+                            default_idx = name_to_idx_map.get(p_name, 0)
+                            
+                            sel = c3.selectbox(f"Select player {i+1}", all_player_name_options, index=default_idx, key=f"sim_{i}", label_visibility="collapsed")
+                            new_sim_ids.append(player_search_map[sel])
                 
                 if new_sim_ids != current_sim_ids:
                     st.session_state.simulated_squad_ids = new_sim_ids

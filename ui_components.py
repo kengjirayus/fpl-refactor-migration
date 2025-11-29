@@ -708,6 +708,11 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     value_df['price'] = value_df['now_cost'] / 10.0
     value_df['position'] = value_df['element_type'].map(POSITIONS)
     
+    # Clean data for chart
+    value_df = value_df.dropna(subset=['price', 'pred_points'])
+    value_df = value_df[~value_df['price'].isin([np.inf, -np.inf])]
+    value_df = value_df[~value_df['pred_points'].isin([np.inf, -np.inf])]
+    
     # Filter based on selection
     if selected_positions:
         value_df = value_df[value_df['position'].isin(selected_positions)]
@@ -778,7 +783,13 @@ def display_player_comparison(player1_data, player2_data):
     # Helper to safely get float value
     def get_val(row, col):
         try:
-            val = float(row.get(col, 0))
+            val = row.get(col, 0)
+            if pd.isna(val) or val is None:
+                return 0.0
+            val = float(val)
+            if np.isinf(val) or np.isnan(val):
+                return 0.0
+                
             # Normalize Fixture Ease to 0-10 scale for visualization if it's 0-1
             if col == 'avg_fixture_ease' and val <= 1.0:
                 return val * 10
@@ -789,9 +800,16 @@ def display_player_comparison(player1_data, player2_data):
     def get_range(row, col):
         val = get_val(row, col)
         if col == 'pred_points':
-            floor = float(row.get('floor', val))
-            ceiling = float(row.get('ceiling', val))
-            return floor, ceiling
+            try:
+                floor = float(row.get('floor', val))
+                if np.isnan(floor) or np.isinf(floor): floor = val
+                
+                ceiling = float(row.get('ceiling', val))
+                if np.isnan(ceiling) or np.isinf(ceiling): ceiling = val
+                
+                return floor, ceiling
+            except:
+                return val, val
         return val, val
 
     p1_vals = [get_val(player1_data, c) for c in categories]
@@ -906,11 +924,18 @@ def display_player_comparison(player1_data, player2_data):
                 p2_split = calculate_home_away_split(p2_id)
             
             # Prepare data for chart
+            # Helper to sanitize split values
+            def safe_split_val(val):
+                try:
+                    v = float(val)
+                    return 0.0 if np.isnan(v) or np.isinf(v) else v
+                except: return 0.0
+
             split_data = [
-                {"Player": player1_data.get('web_name', 'P1'), "Venue": "Home", "Avg Points": p1_split['home_avg']},
-                {"Player": player1_data.get('web_name', 'P1'), "Venue": "Away", "Avg Points": p1_split['away_avg']},
-                {"Player": player2_data.get('web_name', 'P2'), "Venue": "Home", "Avg Points": p2_split['home_avg']},
-                {"Player": player2_data.get('web_name', 'P2'), "Venue": "Away", "Avg Points": p2_split['away_avg']},
+                {"Player": player1_data.get('web_name', 'P1'), "Venue": "Home", "Avg Points": safe_split_val(p1_split['home_avg'])},
+                {"Player": player1_data.get('web_name', 'P1'), "Venue": "Away", "Avg Points": safe_split_val(p1_split['away_avg'])},
+                {"Player": player2_data.get('web_name', 'P2'), "Venue": "Home", "Avg Points": safe_split_val(p2_split['home_avg'])},
+                {"Player": player2_data.get('web_name', 'P2'), "Venue": "Away", "Avg Points": safe_split_val(p2_split['away_avg'])},
             ]
             split_df = pd.DataFrame(split_data)
             
