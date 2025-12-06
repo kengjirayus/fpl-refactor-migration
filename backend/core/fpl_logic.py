@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any
 from .data_helpers import get_player_history, get_midweek_data
 from functools import lru_cache
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
@@ -609,7 +609,7 @@ def analyze_lineup_insights(xi_df: pd.DataFrame, bench_df: pd.DataFrame) -> List
     
     return insights
 
-@lru_cache(maxsize=1)
+# @lru_cache(maxsize=1) - Removed due to DataFrame arguments
 def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int, lookahead: int = 5):
     team_names = teams_df.set_index('id')['short_name'].to_dict()
     team_strength = teams_df.set_index('id')
@@ -714,7 +714,7 @@ def detect_fixture_swing(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, curr
     return swing_data
 
 
-@lru_cache(maxsize=1)
+# @lru_cache(maxsize=1) - Removed
 def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame, all_players: pd.DataFrame, budget: float = 9.0):
     gks = all_players[
         (all_players['element_type'] == 1) &
@@ -767,7 +767,7 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
     pairs_df['Total Cost'] = pairs_df['Total Cost'].apply(lambda x: f"£{x:.1f}m")
     return pairs_df[['GK1', 'GK2', 'Total Cost','Rating']].head(10).reset_index(drop=True)
 
-@lru_cache(maxsize=100)
+# @lru_cache(maxsize=100) - Removed
 def predict_next_n_gws(player_data: Dict, n_gws: int, current_gw: int, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame) -> float:
     # Use dictionary access instead of DataFrame lookup
     team_id = player_data['team']

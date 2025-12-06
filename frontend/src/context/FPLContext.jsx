@@ -10,6 +10,7 @@ export const FPLProvider = ({ children }) => {
     const [error, setError] = useState(null);
     const [bootstrap, setBootstrap] = useState(null);
     const [settings, setSettings] = useState(null);
+    const [generalData, setGeneralData] = useState(null);
 
     // Load Bootstrap Data on Mount
     useEffect(() => {
@@ -21,7 +22,19 @@ export const FPLProvider = ({ children }) => {
                 console.error("Failed to load bootstrap data", err);
             }
         };
+
+        const fetchGeneralData = async () => {
+            // Only fetch if we don't have it (or force refresh if needed later)
+            try {
+                const res = await fplService.getGeneralData();
+                setGeneralData(res.data);
+            } catch (err) {
+                console.error("Failed to load general data", err);
+            }
+        };
+
         fetchBootstrap();
+        fetchGeneralData();
     }, []);
 
     const saveTeamId = (id) => {
@@ -88,6 +101,7 @@ export const FPLProvider = ({ children }) => {
         error,
         bootstrap,
         settings,
+        generalData,
         updateSettings,
         fplService
     };

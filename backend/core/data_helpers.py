@@ -92,29 +92,48 @@ def _fetch(url: str) -> Optional[Dict]:
 # Note: lru_cache does not have TTL support natively. 
 # For production, consider using cachetools.TTLCache or a database.
 
-@lru_cache(maxsize=1)
+import time
+
+# Robust Caching Helper
+_memory_cache = {}
+
+def get_cached_data(key: str, fetch_func, ttl: int = 300):
+    """
+    Caches data only if it is valid (truthy).
+    Prevents caching of None/Empty dicts caused by temporary network failures.
+    """
+    now = time.time()
+    if key in _memory_cache:
+        data, timestamp = _memory_cache[key]
+        if now - timestamp < ttl:
+            return data
+    
+    # Fetch fresh data
+    data = fetch_func()
+    if data:  # Only cache if we got valid data
+        _memory_cache[key] = (data, now)
+    
+    return data or {}
+
+# API Wrappers with Robust Caching
+
 def get_bootstrap() -> Dict:
-    return _fetch(f"{FPL_BASE}/bootstrap-static/") or {}
+    return get_cached_data("bootstrap", lambda: _fetch(f"{FPL_BASE}/bootstrap-static/"), ttl=300)
 
-@lru_cache(maxsize=1)
 def get_fixtures() -> List[Dict]:
-    return _fetch(f"{FPL_BASE}/fixtures/") or []
+    return get_cached_data("fixtures", lambda: _fetch(f"{FPL_BASE}/fixtures/"), ttl=300)
 
-@lru_cache(maxsize=100)
 def get_entry(entry_id: int) -> Dict:
-    return _fetch(f"{FPL_BASE}/entry/{entry_id}/") or {}
+    return get_cached_data(f"entry_{entry_id}", lambda: _fetch(f"{FPL_BASE}/entry/{entry_id}/"), ttl=60)
 
-@lru_cache(maxsize=100)
 def get_entry_picks(entry_id: int, event: int) -> Dict:
-    return _fetch(f"{FPL_BASE}/entry/{entry_id}/event/{event}/picks/") or {}
+    return get_cached_data(f"picks_{entry_id}_{event}", lambda: _fetch(f"{FPL_BASE}/entry/{entry_id}/event/{event}/picks/"), ttl=60)
 
-@lru_cache(maxsize=1000)
 def get_player_history(player_id: int) -> Dict:
-    return _fetch(f"{FPL_BASE}/element-summary/{player_id}/") or {}
+    return get_cached_data(f"history_{player_id}", lambda: _fetch(f"{FPL_BASE}/element-summary/{player_id}/"), ttl=300)
 
-@lru_cache(maxsize=100)
 def get_entry_history(entry_id: int) -> Dict:
-    return _fetch(f"{FPL_BASE}/entry/{entry_id}/history/") or {}
+    return get_cached_data(f"entry_history_{entry_id}", lambda: _fetch(f"{FPL_BASE}/entry/{entry_id}/history/"), ttl=60)
 
 @lru_cache(maxsize=1)
 def get_understat_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -190,7 +209,7 @@ def check_name_match(fpl_name: str, understat_name: str) -> bool:
         pass
     return False
 
-@lru_cache(maxsize=1)
+# @lru_cache(maxsize=1) - Removed due to DataFrame arguments
 def merge_understat_data(us_players_df: pd.DataFrame, us_teams_df: pd.DataFrame, fpl_players_df: pd.DataFrame, fpl_teams_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     # Merge Teams
     merged_teams = pd.DataFrame()

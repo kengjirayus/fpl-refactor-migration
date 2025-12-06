@@ -112,6 +112,98 @@ def analyze_team(team_id: int):
         "picks": picks_data
     }
 
+@router.get("/general-data")
+def get_general_data():
+    bootstrap = get_bootstrap()
+    fixtures = get_fixtures()
+    
+    if not bootstrap or "elements" not in bootstrap:
+        raise HTTPException(status_code=503, detail="FPL API access failed")
+
+    # 1. Basic Data
+    elements, teams, events, fixtures_df = build_master_tables(bootstrap, fixtures)
+    cur_event, next_event = current_and_next_event(bootstrap.get("events", []))
+    target_event = next_event or (cur_event + 1 if cur_event else 1)
+
+    # 2. Feature Engineering (Generic)
+    nf = next_fixture_features(fixtures_df, teams, target_event)
+    us_players, us_teams = get_understat_data()
+    
+    # We pass None for my_team_ids to get generic data (top players)
+    feat = engineer_features_enhanced(elements, teams, nf, us_players, gameweek=cur_event or 1)
+    feat.set_index('id', inplace=True, drop=False)
+    
+    # 3. Specific Sections
+    
+    # Fixture Difficulty & Swing
+    opp_matrix, diff_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
+    swing_data = detect_fixture_swing(fixtures_df, teams, target_event)
+    
+    # Map Next Opponent to Players
+    # opp_matrix index is team short name, columns are GWx
+    gw_col = f"GW{target_event}"
+    if gw_col in opp_matrix.columns:
+        feat['next_opponent'] = feat['team_short'].map(opp_matrix[gw_col])
+    else:
+        feat['next_opponent'] = "-"
+    
+    # Undervalued/Overvalued (Risers/Fallers)
+    risers = feat[feat['cost_change_start'] > 0].sort_values('cost_change_start', ascending=False).head(5).fillna(0).to_dict(orient="records")
+    fallers = feat[feat['cost_change_start'] < 0].sort_values('cost_change_start', ascending=True).head(5).fillna(0).to_dict(orient="records")
+    
+    # Top Captains
+    captains = feat.nlargest(5, 'pred_points').fillna(0).to_dict(orient="records")
+
+    # Trend Cards Logic
+    # 1. Top Form (Highest form)
+    top_form = feat.nlargest(5, 'form').fillna(0).to_dict(orient="records")
+
+    # 2. Top Differentials (Selected < 10%, sorted by pred_points)
+    differentials = feat[feat['selected_by_percent'] < 10.0].nlargest(5, 'pred_points').fillna(0).to_dict(orient="records")
+
+    # 3. Top Most Selected (Highest selected_by_percent)
+    top_selected = feat.nlargest(5, 'selected_by_percent').fillna(0).to_dict(orient="records")
+    
+    # Understat Leaders
+    # We need to merge them to get proper display data if possible, or just send raw
+    # merge_understat_data logic:
+    merged_us_players, merged_us_teams = merge_understat_data(
+            us_players, 
+            us_teams, 
+            feat[['team', 'web_name', 'photo_url', 'team_short', 'goals_scored', 'assists']], 
+            teams[['id', 'name', 'logo_url']]
+    )
+    
+    # Convert DataFrames to JSON-compatible format
+    # Helper to clean NaNs
+    def clean_df(df):
+        return df.fillna(0).to_dict(orient="records")
+
+    # Find deadline for next/target event
+    target_event_data = next((e for e in bootstrap.get("events", []) if e['id'] == target_event), None)
+    deadline_time = target_event_data['deadline_time'] if target_event_data else None
+
+    return {
+        "gameweek": {
+            "current": cur_event,
+            "next": target_event,
+            "deadline_time": deadline_time
+        },
+        "top_players": clean_df(feat.nlargest(50, 'pred_points')),
+        "captains": captains,
+        "risers": risers,
+        "fallers": fallers,
+        "fixture_swing": swing_data,
+        "fixture_difficulty": clean_df(diff_matrix.reset_index().rename(columns={"index": "team_short"})),
+        "opponent_matrix": clean_df(opp_matrix.reset_index().rename(columns={"index": "team_short"})),
+        "understat_players": clean_df(merged_us_players) if not merged_us_players.empty else [],
+        "understat_teams": clean_df(merged_us_teams) if not merged_us_teams.empty else [],
+        "top_form": top_form,
+        "differentials": differentials,
+        "top_selected": top_selected,
+        "teams": clean_df(teams)
+    }
+
 @router.post("/simulate")
 def simulate_team(request: SimulationRequest):
     # 1. Get Features (Re-using logic, ideally cached)

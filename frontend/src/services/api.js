@@ -17,6 +17,7 @@ export const fplService = {
     getTransferSuggestions: (data) => api.post('/transfers/suggest', data),
     getSettings: (teamId) => api.get(`/settings/${teamId}`),
     saveSettings: (data) => api.post('/settings', data),
+    getGeneralData: () => api.get('/general-data'),
 };
 
 export default api;

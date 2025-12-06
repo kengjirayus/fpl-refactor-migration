@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useFPL } from '../context/FPLContext';
 import { Trophy, Users, TrendingUp, AlertCircle, Loader } from 'lucide-react';
 
+import GenericDashboard from '../components/GenericDashboard';
+
 const Dashboard = () => {
     const { teamId, saveTeamId, teamData, fetchTeamAnalysis, loading, error } = useFPL();
     const [inputId, setInputId] = useState('');
@@ -22,23 +24,29 @@ const Dashboard = () => {
 
     if (!teamId) {
         return (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-                <Trophy size={64} className="text-purple-500 mb-4" />
-                <h2 className="text-3xl font-bold text-white mb-2">Welcome to FPL WIZ</h2>
-                <p className="text-gray-400 mb-6 max-w-md">Enter your FPL Team ID to start analyzing your squad with AI-powered insights.</p>
-                <form onSubmit={handleSearch} className="flex gap-2">
-                    <input
-                        type="number"
-                        placeholder="Team ID (e.g. 123456)"
-                        className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:border-purple-500"
-                        value={inputId}
-                        onChange={(e) => setInputId(e.target.value)}
-                    />
-                    <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-lg font-medium transition-colors">
-                        Start
-                    </button>
-                </form>
-                <p className="text-xs text-gray-600 mt-4">Don't know your ID? Check the URL when viewing your points on the FPL site.</p>
+            <div className="space-y-8">
+                {/* Search / Login Section */}
+                <div className="bg-gray-800/50 p-6 rounded-xl border border-gray-700/50 backdrop-blur-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-white">Analyze Your Team</h2>
+                        <p className="text-sm text-gray-400">Enter your FPL Team ID to get personalized insights.</p>
+                    </div>
+                    <form onSubmit={handleSearch} className="flex gap-2 w-full md:w-auto">
+                        <input
+                            type="number"
+                            placeholder="Team ID (e.g. 123456)"
+                            className="bg-gray-900 border border-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:border-purple-500 w-full"
+                            value={inputId}
+                            onChange={(e) => setInputId(e.target.value)}
+                        />
+                        <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-lg font-medium transition-colors whitespace-nowrap">
+                            Analyze
+                        </button>
+                    </form>
+                </div>
+
+                {/* Generic Dashboard View */}
+                <GenericDashboard />
             </div>
         );
     }
