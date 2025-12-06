@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pandas
+numpy
+requests
+firebase-admin
+python-multipart
+python-dotenv
+httpx
